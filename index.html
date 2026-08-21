@@ -423,7 +423,7 @@
   <script>
     const SUPABASE_URL = "https://rjrjfahhrgvfamotepkp.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqcmpmYWhocmd2ZmFtb3RlcGtwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyNTM0NTMsImV4cCI6MjEwMjgyOTQ1M30.Q69OFACS85Ddn2SD7sMPNV13fdK0QxQ7bnoNZK8eeQU";
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const BOARD_FIELDS = [
       "aab1","aab2","aab3",
@@ -456,7 +456,7 @@
     }
 
     async function loadManagers() {
-      const { data, error } = await supabase.from("managers").select("*").order("name");
+      const { data, error } = await sb.from("managers").select("*").order("name");
       if (error) { console.error(error); return; }
       managers = data || [];
       refreshMgrDropdown();
@@ -464,7 +464,7 @@
     }
 
     async function loadBoard() {
-      const { data, error } = await supabase.from("board_state").select("*").eq("id", 1).maybeSingle();
+      const { data, error } = await sb.from("board_state").select("*").eq("id", 1).maybeSingle();
       if (error) { console.error(error); return; }
       if (!data) return;
       applyingRemote = true;
@@ -526,7 +526,7 @@
         selected_manager_id: selectedMgrId || null,
         updated_at: new Date().toISOString()
       };
-      const { error } = await supabase.from("board_state").upsert(payload);
+      const { error } = await sb.from("board_state").upsert(payload);
       if (error) {
         console.error(error);
         flashStatus("Save failed – run SQL for aab columns?");
@@ -560,7 +560,7 @@
     }
 
     function subscribeRealtime() {
-      supabase.channel("board-live")
+      sb.channel("board-live")
         .on("postgres_changes", { event: "*", schema: "public", table: "board_state" }, payload => {
           if (payload.new) {
             applyingRemote = true;
@@ -673,10 +673,10 @@
       if (!name) { alert("Name is required."); return; }
       const existing = managers.find(m => m.name.toLowerCase() === name.toLowerCase());
       if (existing) {
-        const { error } = await supabase.from("managers").update({ phone, email }).eq("id", existing.id);
+        const { error } = await sb.from("managers").update({ phone, email }).eq("id", existing.id);
         if (error) { alert(error.message); return; }
       } else {
-        const { error } = await supabase.from("managers").insert({ name, phone, email });
+        const { error } = await sb.from("managers").insert({ name, phone, email });
         if (error) { alert(error.message); return; }
       }
       await loadManagers();
@@ -696,7 +696,7 @@
 
     async function deleteMgr(id) {
       if (!confirm("Delete this manager?")) return;
-      const { error } = await supabase.from("managers").delete().eq("id", id);
+      const { error } = await sb.from("managers").delete().eq("id", id);
       if (error) { alert(error.message); return; }
       if (selectedMgrId === id) {
         selectedMgrId = null;
