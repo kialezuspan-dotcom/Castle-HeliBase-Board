@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Castle Helibase Status Board</title>
+  <!-- Supabase JS client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    :root {
+      --tape: #1e4d8c;
+      --tape-dark: #163a6b;
+      --paper: #f7f7f2;
+      --paper-edge: #e8e6dc;
+      --marker: #1a1a1a;
+      --wood: #8b6914;
+      --wood-light: #c4a35a;
+      --danger: #c62828;
+      --bg-room: #d4d0c8;
+      --white-board: #faf9f5;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: var(--bg-room);
+      min-height: 100vh;
+      padding: 12px 10px 32px;
+      display: flex; flex-direction: column; align-items: center;
+    }
+
+    /* ===== LOGIN ===== */
+    #loginScreen {
+      position: fixed; inset: 0; z-index: 9999;
+      background: #1a2332;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 14px; color: #e0e0e0;
+    }
+    #loginScreen.hidden { display: none; }
+    #loginScreen h2 { font-size: 1.35rem; letter-spacing: 0.06em; }
+    #loginScreen p { font-size: 0.85rem; opacity: 0.75; max-width: 340px; text-align: center; }
+    #loginScreen input {
+      padding: 12px 16px; font-size: 1rem; border-radius: 6px;
+      border: 2px solid #415a77; background: #0d1b2a; color: #fff;
+      width: 280px; outline: none;
+    }
+    #loginScreen input:focus { border-color: #778da9; }
+    #loginScreen button {
+      padding: 11px 32px; font-size: 1rem; font-weight: 600;
+      background: #1e4d8c; color: #fff; border: none; border-radius: 6px; cursor: pointer;
+    }
+    #loginScreen .err { color: #ff6b6b; font-size: 0.85rem; min-height: 1.2em; }
+    #loginScreen .hint { font-size: 0.7rem; opacity: 0.5; margin-top: 6px; }
+
+    /* ===== APP ===== */
+    .app-wrap { display: none; width: 100%; max-width: 1280px; }
+    .app-wrap.visible { display: block; }
+
+    .outer-frame {
+      background: linear-gradient(145deg, var(--wood-light), var(--wood));
+      padding: 12px; border-radius: 4px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.25);
+      display: flex; flex-wrap: wrap; width: 100%;
+    }
+
+    /* LEFT */
+    .left-panel {
+      background: var(--white-board);
+      flex: 1 1 320px; min-width: 280px; max-width: 380px;
+      padding: 14px 16px 18px;
+      border-right: 3px solid #c8c4b8;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    .left-header {
+      font-size: 0.95rem; font-weight: 800; color: var(--marker);
+      border-bottom: 2px solid #333; padding-bottom: 6px;
+    }
+    .left-header small { display: block; font-weight: 600; font-size: 0.8rem; margin-top: 2px; color: #333; }
+    .section-title {
+      font-size: 0.78rem; font-weight: 800; text-transform: uppercase;
+      letter-spacing: 0.04em; color: #333; margin-bottom: 4px;
+    }
+    .mgr-select-row { display: flex; gap: 6px; align-items: center; }
+    .mgr-select-row select {
+      flex: 1; padding: 8px 10px; font-size: 0.95rem; font-weight: 600;
+      border: 2px solid #555; border-radius: 3px; background: #fff; color: var(--marker);
+    }
+    .btn-small {
+      padding: 7px 10px; font-size: 0.75rem; font-weight: 700; border: none;
+      border-radius: 3px; cursor: pointer; background: #2c3e50; color: #fff; white-space: nowrap;
+    }
+    .btn-small.green { background: #1b7a4e; }
+    .btn-small.red { background: #9b1c1c; }
+    .contact-card {
+      background: #fff; border: 1px solid #ccc; border-radius: 4px;
+      padding: 10px 12px; font-size: 0.9rem; line-height: 1.45;
+    }
+    .contact-card .label {
+      font-size: 0.65rem; font-weight: 700; text-transform: uppercase; color: #666; letter-spacing: 0.04em;
+    }
+    .contact-card .val {
+      font-weight: 700; color: var(--marker); margin-bottom: 6px; word-break: break-all;
+    }
+    .contact-card .val:last-child { margin-bottom: 0; }
+    .notes-area { flex: 1; display: flex; flex-direction: column; min-height: 140px; }
+    .notes-area textarea {
+      flex: 1; width: 100%; min-height: 120px; padding: 10px; font-size: 0.9rem;
+      font-family: inherit; border: 2px solid #555; border-radius: 3px; resize: vertical;
+      background: #fff; color: var(--marker); line-height: 1.4;
+    }
+
+    /* RIGHT */
+    .right-panel {
+      flex: 2 1 560px; min-width: 300px;
+      background: var(--tape); padding: 12px 10px 16px; border: 3px solid var(--tape-dark);
+    }
+    .board-title {
+      text-align: center; color: rgba(255,255,255,0.85); font-size: 0.68rem;
+      font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 8px;
+    }
+    .tape-label {
+      color: #fff; font-weight: 800; font-size: 0.7rem; letter-spacing: 0.05em;
+      text-transform: uppercase; text-align: center; padding: 2px 3px 4px;
+      text-shadow: 0 1px 1px rgba(0,0,0,0.35); line-height: 1.15;
+    }
+    .paper {
+      background: var(--paper); border: 1px solid var(--paper-edge);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.06); min-height: 40px;
+      display: flex; align-items: center; justify-content: center; padding: 3px 5px;
+    }
+    .paper input {
+      width: 100%; border: none; background: transparent; font-size: 1.1rem;
+      font-weight: 700; color: var(--marker); text-align: center; outline: none; font-family: inherit;
+    }
+    .paper input::placeholder { color: #b0aea6; font-weight: 500; }
+    .section { display: grid; gap: 7px; margin-bottom: 9px; }
+    .row-3 { grid-template-columns: 1.5fr 1fr 1fr; }
+    .row-4 { grid-template-columns: 1fr 1fr 1.7fr 1fr; }
+    .row-2 { grid-template-columns: 1fr 1fr; }
+    .cell { display: flex; flex-direction: column; }
+    .temp-paper { flex-direction: column; gap: 4px; padding: 5px; min-height: 82px; }
+    .temp-pair { display: flex; gap: 5px; width: 100%; }
+    .temp-block {
+      flex: 1; background: #fff; border: 1px solid #d0cec4; padding: 3px 2px;
+      text-align: center; border-radius: 2px; transition: background 0.25s, color 0.25s;
+    }
+    .temp-block.blink { animation: blinkRed 1s ease-in-out infinite; }
+    @keyframes blinkRed {
+      0%, 100% { background: #fff; color: var(--marker); }
+      50% { background: var(--danger); color: #fff; }
+    }
+    .temp-elev { font-size: 0.55rem; font-weight: 700; color: #555; text-transform: uppercase; }
+    .temp-block.blink .temp-elev { color: inherit; }
+    .temp-value { font-size: 1rem; font-weight: 800; color: var(--marker); line-height: 1.2; margin: 1px 0; }
+    .temp-block.blink .temp-value { color: inherit; }
+    .temp-source { font-size: 0.5rem; color: #777; }
+    .temp-block.blink .temp-source { color: inherit; opacity: 0.85; }
+    .hours-row {
+      display: grid; grid-template-columns: auto 1fr; gap: 6px; align-items: center; margin-top: 2px;
+    }
+    .hours-label {
+      color: #fff; font-weight: 800; font-size: 0.72rem; letter-spacing: 0.04em;
+      text-transform: uppercase; text-shadow: 0 1px 1px rgba(0,0,0,0.35); white-space: nowrap;
+    }
+    .arrow { color: #fff; font-size: 1rem; font-weight: 700; opacity: 0.9; }
+    .hours-slots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+    .hours-slots .paper { min-height: 44px; }
+    .hours-slots input { font-size: 1.25rem; }
+
+    .controls {
+      display: none; flex-wrap: wrap; gap: 8px; justify-content: center;
+      margin-top: 14px; max-width: 1280px; width: 100%;
+    }
+    .controls.visible { display: flex; }
+    button.ctrl {
+      background: #2c3e50; color: #fff; border: none; border-radius: 4px;
+      padding: 9px 14px; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    button.ctrl.success { background: #1b7a4e; }
+    button.ctrl.danger  { background: #9b1c1c; }
+    button.ctrl.secondary { background: #3d5a80; }
+
+    .status-bar {
+      display: none; text-align: center; margin-top: 10px; font-size: 0.7rem;
+      color: #444; max-width: 1280px;
+    }
+    .status-bar.visible { display: block; }
+    .status-bar .live { color: #1b7a4e; font-weight: 700; }
+
+    #mgrModal {
+      display: none; position: fixed; inset: 0; z-index: 1000;
+      background: rgba(0,0,0,0.55); align-items: center; justify-content: center;
+    }
+    #mgrModal.open { display: flex; }
+    .modal-box {
+      background: #fff; border-radius: 8px; padding: 20px; width: 92%; max-width: 420px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.4); max-height: 90vh; overflow-y: auto;
+    }
+    .modal-box h3 { margin-bottom: 12px; font-size: 1.1rem; }
+    .modal-box label { display: block; font-size: 0.75rem; font-weight: 700; margin: 8px 0 3px; color: #444; }
+    .modal-box input {
+      width: 100%; padding: 8px 10px; font-size: 0.95rem; border: 1px solid #bbb; border-radius: 4px;
+    }
+    .modal-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+    .mgr-list { margin-top: 14px; border-top: 1px solid #ddd; padding-top: 10px; }
+    .mgr-list-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 6px 0; border-bottom: 1px solid #eee; font-size: 0.85rem;
+    }
+    .mgr-list-item button { font-size: 0.7rem; padding: 3px 8px; }
+
+    body.tv-mode .paper input, body.tv-mode .temp-value { font-size: 1.45rem; }
+    body.tv-mode .hours-slots input { font-size: 1.6rem; }
+    body.tv-mode .tape-label { font-size: 0.85rem; }
+
+    @media (max-width: 800px) {
+      .outer-frame { flex-direction: column; }
+      .left-panel { max-width: none; border-right: none; border-bottom: 3px solid #c8c4b8; }
+      .row-3, .row-4, .row-2 { grid-template-columns: 1fr 1fr; }
+      .row-4 .cell:nth-child(3) { grid-column: 1 / -1; }
+      .hours-slots { grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (max-width: 420px) {
+      .row-3, .row-4, .row-2 { grid-template-columns: 1fr; }
+      .hours-slots { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- LOGIN -->
+  <div id="loginScreen">
+    <h2>CASTLE HELIBASE BOARD</h2>
+    <p>Sign in to view and update the live status board on any device.</p>
+    <input type="email" id="emailInput" placeholder="Email" autocomplete="username" />
+    <input type="password" id="passInput" placeholder="Password" autocomplete="current-password" />
+    <button onclick="doLogin()">Sign In</button>
+    <div class="err" id="loginErr"></div>
+    <p class="hint">Accounts are created in your Supabase project (Auth → Users).</p>
+  </div>
+
+  <!-- APP -->
+  <div class="app-wrap" id="appWrap">
+    <div class="outer-frame">
+      <!-- LEFT -->
+      <div class="left-panel">
+        <div class="left-header">
+          COLUMBIA AAB
+          <small>(209) 532-2911</small>
+        </div>
+
+        <div>
+          <div class="section-title">Manager</div>
+          <div class="mgr-select-row">
+            <select id="mgrSelect" onchange="onMgrSelect()">
+              <option value="">— Select manager —</option>
+            </select>
+            <button class="btn-small" onclick="openMgrModal()">Manage</button>
+          </div>
+        </div>
+
+        <div class="contact-card">
+          <div class="label">Name</div>
+          <div class="val" id="mgrName">—</div>
+          <div class="label">Phone</div>
+          <div class="val" id="mgrPhone">—</div>
+          <div class="label">Work Email</div>
+          <div class="val" id="mgrEmail">—</div>
+        </div>
+
+        <div class="notes-area">
+          <div class="section-title">Notes / Information</div>
+          <textarea id="notesField" placeholder="Add information here…" onchange="saveBoard()" onblur="saveBoard()"></textarea>
+        </div>
+      </div>
+
+      <!-- RIGHT -->
+      <div class="right-panel">
+        <div class="board-title">Status Board · Live</div>
+
+        <div class="section row-3">
+          <div class="cell">
+            <div class="tape-label">Incident</div>
+            <div class="paper"><input type="text" id="incident" autocomplete="off" /></div>
+          </div>
+          <div class="cell">
+            <div class="tape-label">Date</div>
+            <div class="paper"><input type="text" id="date" readonly /></div>
+          </div>
+          <div class="cell">
+            <div class="tape-label">Hobbs</div>
+            <div class="paper"><input type="number" id="hobbs" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
+          </div>
+        </div>
+
+        <div class="section row-4">
+          <div class="cell">
+            <div class="tape-label">Time ↑</div>
+            <div class="paper">
+              <input type="text" id="timeUp" placeholder="HH:MM" inputmode="numeric"
+                     pattern="([01][0-9]|2[0-3]):[0-5][0-9]" maxlength="5" autocomplete="off" title="24-hour" />
+            </div>
+          </div>
+          <div class="cell">
+            <div class="tape-label">Time ↓</div>
+            <div class="paper">
+              <input type="text" id="timeDown" placeholder="HH:MM" inputmode="numeric"
+                     pattern="([01][0-9]|2[0-3]):[0-5][0-9]" maxlength="5" autocomplete="off" title="24-hour" />
+            </div>
+          </div>
+          <div class="cell">
+            <div class="tape-label">High Temp</div>
+            <div class="paper temp-paper">
+              <div class="temp-pair">
+                <div class="temp-block" id="tempKmerBlock">
+                  <div class="temp-elev">~190′ KMER</div>
+                  <div class="temp-value" id="tempKmer">--</div>
+                  <div class="temp-source">NWS METAR</div>
+                </div>
+                <div class="temp-block" id="tempFishBlock">
+                  <div class="temp-elev">~5,060′ Fish Camp</div>
+                  <div class="temp-value" id="tempFish">--</div>
+                  <div class="temp-source">NWS</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="cell">
+            <div class="tape-label">Cutoff</div>
+            <div class="paper">
+              <input type="text" id="cutoff" placeholder="HH:MM" inputmode="numeric"
+                     pattern="([01][0-9]|2[0-3]):[0-5][0-9]" maxlength="5" autocomplete="off" title="24-hour" />
+            </div>
+          </div>
+        </div>
+
+        <div class="section row-2">
+          <div class="cell">
+            <div class="tape-label">PIC</div>
+            <div class="paper"><input type="text" id="pic" autocomplete="off" /></div>
+          </div>
+          <div class="cell">
+            <div class="tape-label">SIC</div>
+            <div class="paper"><input type="text" id="sic" autocomplete="off" /></div>
+          </div>
+        </div>
+
+        <div class="section row-2">
+          <div class="cell">
+            <div class="tape-label">Mech.</div>
+            <div class="paper"><input type="text" id="mech" autocomplete="off" /></div>
+          </div>
+          <div class="cell">
+            <div class="tape-label">Fuel Driver</div>
+            <div class="paper"><input type="text" id="fuelDriver" autocomplete="off" /></div>
+          </div>
+        </div>
+
+        <div class="hours-row">
+          <div style="display:flex;align-items:center;gap:4px;">
+            <div class="hours-label">Flight Hours</div>
+            <span class="arrow">→</span>
+          </div>
+          <div class="hours-slots">
+            <div class="paper"><input type="number" id="fh1" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
+            <div class="paper"><input type="number" id="fh2" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
+            <div class="paper"><input type="number" id="fh3" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
+            <div class="paper"><input type="number" id="fh4" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
+            <div class="paper"><input type="number" id="fh5" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls" id="controls">
+    <button class="ctrl success" onclick="saveBoard()">Save Board</button>
+    <button class="ctrl secondary" onclick="refreshWeather()">Refresh Weather</button>
+    <button class="ctrl secondary" onclick="toggleTvMode()">TV / Large Screen</button>
+    <button class="ctrl secondary" onclick="doLogout()">Sign Out</button>
+    <button class="ctrl danger" onclick="clearBoard()">Clear Board</button>
+  </div>
+
+  <div class="status-bar" id="statusBar">
+    Weather: <span id="weatherTime">—</span>
+    &nbsp;•&nbsp;
+    <span id="weatherStatus" class="live">Ready</span>
+    &nbsp;•&nbsp;
+    <span id="syncStatus">Connecting…</span>
+  </div>
+
+  <!-- Manager modal -->
+  <div id="mgrModal">
+    <div class="modal-box">
+      <h3>Manage Managers</h3>
+      <label>Name</label>
+      <input type="text" id="mName" placeholder="Full name" autocomplete="off" />
+      <label>Phone</label>
+      <input type="tel" id="mPhone" placeholder="530-555-1234" autocomplete="off" />
+      <label>Work Email</label>
+      <input type="email" id="mEmail" placeholder="name@agency.gov" autocomplete="off" />
+      <div class="modal-actions">
+        <button class="btn-small green" onclick="addOrUpdateMgr()">Add / Update</button>
+        <button class="btn-small" onclick="closeMgrModal()">Close</button>
+      </div>
+      <div class="mgr-list" id="mgrList"></div>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================
+    // 1. PASTE YOUR SUPABASE CREDENTIALS HERE
+    // ============================================================
+    const SUPABASE_URL = "https://rjrjfahhrgvfamotepkp.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_74RKiIdh56Lc0IH1ahaA_g_xWXhGc4x";
+
+    // ============================================================
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const BOARD_FIELDS = [
+      "incident", "hobbs", "timeUp", "timeDown", "cutoff",
+      "pic", "sic", "mech", "fuelDriver",
+      "fh1", "fh2", "fh3", "fh4", "fh5"
+    ];
+
+    let managers = [];
+    let selectedMgrId = null;
+    let saveTimer = null;
+    let applyingRemote = false; // prevent feedback loops
+
+    // ---------- Auth ----------
+    async function doLogin() {
+      const email = document.getElementById("emailInput").value.trim();
+      const password = document.getElementById("passInput").value;
+      const err = document.getElementById("loginErr");
+      err.textContent = "";
+      if (!email || !password) {
+        err.textContent = "Enter email and password.";
+        return;
+      }
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        err.textContent = error.message;
+        return;
+      }
+      await onAuthenticated();
+    }
+
+    async function doLogout() {
+      await supabase.auth.signOut();
+      location.reload();
+    }
+
+    async function checkSession() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) await onAuthenticated();
+    }
+
+    async function onAuthenticated() {
+      document.getElementById("loginScreen").classList.add("hidden");
+      document.getElementById("appWrap").classList.add("visible");
+      document.getElementById("controls").classList.add("visible");
+      document.getElementById("statusBar").classList.add("visible");
+
+      setToday();
+      setupBoardListeners();
+      await loadAll();
+      subscribeRealtime();
+      updateWeather();
+      setInterval(updateWeather, 8 * 60 * 1000);
+      document.getElementById("syncStatus").textContent = "Live sync on";
+      document.getElementById("syncStatus").className = "live";
+    }
+
+    // ---------- Load ----------
+    async function loadAll() {
+      await Promise.all([loadManagers(), loadBoard()]);
+    }
+
+    async function loadManagers() {
+      const { data, error } = await supabase
+        .from("managers")
+        .select("*")
+        .order("name");
+      if (error) {
+        console.error(error);
+        return;
+      }
+      managers = data || [];
+      refreshMgrDropdown();
+      if (selectedMgrId) onMgrSelect();
+    }
+
+    async function loadBoard() {
+      const { data, error } = await supabase
+        .from("board_state")
+        .select("*")
+        .eq("id", 1)
+        .maybeSingle();
+      if (error) {
+        console.error(error);
+        return;
+      }
+      if (!data) return;
+      applyingRemote = true;
+      document.getElementById("incident").value = data.incident || "";
+      document.getElementById("hobbs").value = data.hobbs || "";
+      document.getElementById("timeUp").value = data.time_up || "";
+      document.getElementById("timeDown").value = data.time_down || "";
+      document.getElementById("cutoff").value = data.cutoff || "";
+      document.getElementById("pic").value = data.pic || "";
+      document.getElementById("sic").value = data.sic || "";
+      document.getElementById("mech").value = data.mech || "";
+      document.getElementById("fuelDriver").value = data.fuel_driver || "";
+      document.getElementById("fh1").value = data.fh1 || "";
+      document.getElementById("fh2").value = data.fh2 || "";
+      document.getElementById("fh3").value = data.fh3 || "";
+      document.getElementById("fh4").value = data.fh4 || "";
+      document.getElementById("fh5").value = data.fh5 || "";
+      document.getElementById("notesField").value = data.notes || "";
+      selectedMgrId = data.selected_manager_id || null;
+      document.getElementById("mgrSelect").value = selectedMgrId || "";
+      onMgrSelect();
+      applyingRemote = false;
+    }
+
+    // ---------- Save board (debounced) ----------
+    function queueSave() {
+      if (applyingRemote) return;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(saveBoard, 400);
+    }
+
+    async function saveBoard() {
+      if (applyingRemote) return;
+      const payload = {
+        id: 1,
+        incident: document.getElementById("incident").value,
+        hobbs: document.getElementById("hobbs").value,
+        time_up: document.getElementById("timeUp").value,
+        time_down: document.getElementById("timeDown").value,
+        cutoff: document.getElementById("cutoff").value,
+        pic: document.getElementById("pic").value,
+        sic: document.getElementById("sic").value,
+        mech: document.getElementById("mech").value,
+        fuel_driver: document.getElementById("fuelDriver").value,
+        fh1: document.getElementById("fh1").value,
+        fh2: document.getElementById("fh2").value,
+        fh3: document.getElementById("fh3").value,
+        fh4: document.getElementById("fh4").value,
+        fh5: document.getElementById("fh5").value,
+        notes: document.getElementById("notesField").value,
+        selected_manager_id: selectedMgrId || null,
+        updated_at: new Date().toISOString()
+      };
+      const { error } = await supabase.from("board_state").upsert(payload);
+      if (error) {
+        console.error(error);
+        flashStatus("Save failed");
+      } else {
+        flashStatus("Saved · synced");
+      }
+    }
+
+    function setupBoardListeners() {
+      BOARD_FIELDS.forEach(id => {
+        const el = document.getElementById(id);
+        el.addEventListener("input", queueSave);
+        el.addEventListener("change", queueSave);
+      });
+    }
+
+    async function clearBoard() {
+      if (!confirm("Clear all status-board fields for everyone?")) return;
+      BOARD_FIELDS.forEach(id => { document.getElementById(id).value = ""; });
+      document.getElementById("notesField").value = "";
+      selectedMgrId = null;
+      document.getElementById("mgrSelect").value = "";
+      onMgrSelect();
+      await saveBoard();
+      setToday();
+    }
+
+    // ---------- Realtime ----------
+    function subscribeRealtime() {
+      supabase
+        .channel("board-live")
+        .on("postgres_changes", { event: "*", schema: "public", table: "board_state" }, payload => {
+          if (payload.new) {
+            applyingRemote = true;
+            const d = payload.new;
+            document.getElementById("incident").value = d.incident || "";
+            document.getElementById("hobbs").value = d.hobbs || "";
+            document.getElementById("timeUp").value = d.time_up || "";
+            document.getElementById("timeDown").value = d.time_down || "";
+            document.getElementById("cutoff").value = d.cutoff || "";
+            document.getElementById("pic").value = d.pic || "";
+            document.getElementById("sic").value = d.sic || "";
+            document.getElementById("mech").value = d.mech || "";
+            document.getElementById("fuelDriver").value = d.fuel_driver || "";
+            document.getElementById("fh1").value = d.fh1 || "";
+            document.getElementById("fh2").value = d.fh2 || "";
+            document.getElementById("fh3").value = d.fh3 || "";
+            document.getElementById("fh4").value = d.fh4 || "";
+            document.getElementById("fh5").value = d.fh5 || "";
+            document.getElementById("notesField").value = d.notes || "";
+            selectedMgrId = d.selected_manager_id || null;
+            document.getElementById("mgrSelect").value = selectedMgrId || "";
+            onMgrSelect();
+            applyingRemote = false;
+            flashStatus("Updated from another device");
+          }
+        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "managers" }, () => {
+          loadManagers();
+        })
+        .subscribe();
+    }
+
+    // ---------- Managers ----------
+    function refreshMgrDropdown() {
+      const sel = document.getElementById("mgrSelect");
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">— Select manager —</option>';
+      managers.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = m.name;
+        sel.appendChild(opt);
+      });
+      if (cur) sel.value = cur;
+    }
+
+    function onMgrSelect() {
+      const id = document.getElementById("mgrSelect").value || null;
+      selectedMgrId = id;
+      const m = managers.find(x => x.id === id);
+      document.getElementById("mgrName").textContent = m ? (m.name || "—") : "—";
+      document.getElementById("mgrPhone").textContent = m ? (m.phone || "—") : "—";
+      document.getElementById("mgrEmail").textContent = m ? (m.email || "—") : "—";
+      if (!applyingRemote) queueSave();
+    }
+
+    function openMgrModal() {
+      document.getElementById("mName").value = "";
+      document.getElementById("mPhone").value = "";
+      document.getElementById("mEmail").value = "";
+      renderMgrList();
+      document.getElementById("mgrModal").classList.add("open");
+    }
+    function closeMgrModal() {
+      document.getElementById("mgrModal").classList.remove("open");
+    }
+
+    function renderMgrList() {
+      const list = document.getElementById("mgrList");
+      if (!managers.length) {
+        list.innerHTML = '<div style="font-size:0.8rem;color:#888;">No managers yet.</div>';
+        return;
+      }
+      list.innerHTML = managers.map(m => `
+        <div class="mgr-list-item">
+          <div><strong>${escapeHtml(m.name)}</strong><br>
+            <span style="font-size:0.75rem;color:#555;">${escapeHtml(m.phone||"")} · ${escapeHtml(m.email||"")}</span>
+          </div>
+          <div>
+            <button class="btn-small" onclick="editMgr('${m.id}')">Edit</button>
+            <button class="btn-small red" onclick="deleteMgr('${m.id}')">Del</button>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function escapeHtml(s) {
+      return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    }
+
+    async function addOrUpdateMgr() {
+      const name = document.getElementById("mName").value.trim();
+      const phone = document.getElementById("mPhone").value.trim();
+      const email = document.getElementById("mEmail").value.trim();
+      if (!name) { alert("Name is required."); return; }
+
+      const existing = managers.find(m => m.name.toLowerCase() === name.toLowerCase());
+      if (existing) {
+        const { error } = await supabase.from("managers")
+          .update({ phone, email }).eq("id", existing.id);
+        if (error) { alert(error.message); return; }
+      } else {
+        const { error } = await supabase.from("managers")
+          .insert({ name, phone, email });
+        if (error) { alert(error.message); return; }
+      }
+      await loadManagers();
+      renderMgrList();
+      document.getElementById("mName").value = "";
+      document.getElementById("mPhone").value = "";
+      document.getElementById("mEmail").value = "";
+    }
+
+    function editMgr(id) {
+      const m = managers.find(x => x.id === id);
+      if (!m) return;
+      document.getElementById("mName").value = m.name;
+      document.getElementById("mPhone").value = m.phone || "";
+      document.getElementById("mEmail").value = m.email || "";
+    }
+
+    async function deleteMgr(id) {
+      if (!confirm("Delete this manager?")) return;
+      const { error } = await supabase.from("managers").delete().eq("id", id);
+      if (error) { alert(error.message); return; }
+      if (selectedMgrId === id) {
+        selectedMgrId = null;
+        document.getElementById("mgrSelect").value = "";
+        onMgrSelect();
+      }
+      await loadManagers();
+      renderMgrList();
+    }
+
+    // ---------- Helpers ----------
+    function setToday() {
+      const d = new Date();
+      document.getElementById("date").value =
+        `${d.getMonth()+1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
+    }
+
+    function flashStatus(msg) {
+      const el = document.getElementById("syncStatus");
+      const old = el.textContent;
+      el.textContent = msg;
+      setTimeout(() => { el.textContent = old; }, 2200);
+    }
+
+    function toggleTvMode() {
+      document.body.classList.toggle("tv-mode");
+    }
+
+    // ---------- Weather (NWS – client side) ----------
+    const KMER = { lat: 37.3805, lon: -120.5682 };
+    const FISH = { lat: 37.47675, lon: -119.63828 };
+    const NWS_HEADERS = { "User-Agent": "CastleHelibaseBoard (ops@local)", "Accept": "application/geo+json" };
+    let prevKmerC = null, prevFishC = null;
+
+    async function fetchKmerTempC() {
+      try {
+        const res = await fetch("https://aviationweather.gov/api/data/metar?ids=KMER&format=json");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length) {
+            const m = data[0];
+            if (typeof m.temp === "number") return m.temp;
+            if (m.rawOb) {
+              const match = m.rawOb.match(/\s(M?\d{2})\/(M?\d{2})\s/);
+              if (match) {
+                let t = match[1];
+                if (t.startsWith("M")) t = "-" + t.slice(1);
+                return parseInt(t, 10);
+              }
+            }
+          }
+        }
+      } catch (e) {}
+      return fetchNwsPointTempC(KMER.lat, KMER.lon);
+    }
+
+    async function fetchNwsPointTempC(lat, lon) {
+      const ptRes = await fetch(`https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`, { headers: NWS_HEADERS });
+      if (!ptRes.ok) throw new Error("points");
+      const pt = await ptRes.json();
+      const stationsUrl = pt.properties && pt.properties.observationStations;
+      if (stationsUrl) {
+        const stRes = await fetch(stationsUrl, { headers: NWS_HEADERS });
+        if (stRes.ok) {
+          const stData = await stRes.json();
+          for (const s of (stData.features || []).slice(0, 4)) {
+            try {
+              const oRes = await fetch(s.id + "/observations/latest", { headers: NWS_HEADERS });
+              if (!oRes.ok) continue;
+              const obs = await oRes.json();
+              const t = obs.properties && obs.properties.temperature && obs.properties.temperature.value;
+              if (typeof t === "number") return t;
+            } catch (e) {}
+          }
+        }
+      }
+      const hourlyUrl = pt.properties && pt.properties.forecastHourly;
+      if (hourlyUrl) {
+        const hRes = await fetch(hourlyUrl, { headers: NWS_HEADERS });
+        if (hRes.ok) {
+          const hData = await hRes.json();
+          const period = hData.properties && hData.properties.periods && hData.properties.periods[0];
+          if (period && typeof period.temperature === "number") {
+            const unit = (period.temperatureUnit || "F").toUpperCase();
+            if (unit.startsWith("F")) return (period.temperature - 32) * 5 / 9;
+            return period.temperature;
+          }
+        }
+      }
+      throw new Error("no temp");
+    }
+
+    function formatTemp(c) {
+      if (c === null || isNaN(c)) return "--";
+      return `${Math.round(c*9/5+32)}°F / ${Math.round(c)}°C`;
+    }
+
+    function checkBlink(id, cur, prev) {
+      const el = document.getElementById(id);
+      el.classList.remove("blink");
+      if (prev !== null && cur !== null && Math.abs(cur - prev) > 5) el.classList.add("blink");
+    }
+
+    async function updateWeather() {
+      const status = document.getElementById("weatherStatus");
+      status.textContent = "Updating NWS…";
+      status.className = "";
+      try {
+        const [kmerC, fishC] = await Promise.all([
+          fetchKmerTempC(),
+          fetchNwsPointTempC(FISH.lat, FISH.lon)
+        ]);
+        document.getElementById("tempKmer").textContent = formatTemp(kmerC);
+        document.getElementById("tempFish").textContent = formatTemp(fishC);
+        checkBlink("tempKmerBlock", kmerC, prevKmerC);
+        checkBlink("tempFishBlock", fishC, prevFishC);
+        prevKmerC = kmerC; prevFishC = fishC;
+        document.getElementById("weatherTime").textContent =
+          new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+        status.textContent = "NWS Live";
+        status.className = "live";
+      } catch (e) {
+        status.textContent = "NWS error – retrying";
+        status.className = "";
+      }
+    }
+    function refreshWeather() { updateWeather(); }
+
+    // Enter key on login
+    document.getElementById("passInput").addEventListener("keydown", e => {
+      if (e.key === "Enter") doLogin();
+    });
+
+    // Boot
+    checkSession();
+  </script>
+</body>
+</html>
