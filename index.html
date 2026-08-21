@@ -181,10 +181,10 @@
     .status-bar .live { color: #1b7a4e; font-weight: 700; }
 
     #mgrModal {
-      display: none; position: fixed; inset: 0; z-index: 1000;
+      display: none; position: fixed; inset: 0; z-index: 9999;
       background: rgba(0,0,0,0.55); align-items: center; justify-content: center;
     }
-    #mgrModal.open { display: flex; }
+    #mgrModal.open { display: flex !important; }
     .modal-box {
       background: #fff; border-radius: 8px; padding: 20px; width: 92%; max-width: 420px;
       box-shadow: 0 12px 40px rgba(0,0,0,0.4); max-height: 90vh; overflow-y: auto;
@@ -438,15 +438,17 @@
     let applyingRemote = false;
 
     async function startApp() {
-      setToday();
-      setupBoardListeners();
-      updateDutyRule();
-      await loadAll();
-      subscribeRealtime();
-      updateWeather();
-      setInterval(updateWeather, 8 * 60 * 1000);
-      document.getElementById("syncStatus").textContent = "Live sync on";
-      document.getElementById("syncStatus").className = "live";
+      try { setToday(); } catch (e) { console.error("setToday", e); }
+      try { setupBoardListeners(); } catch (e) { console.error("listeners", e); }
+      try { updateDutyRule(); } catch (e) { console.error("duty", e); }
+      try { await loadAll(); } catch (e) { console.error("loadAll", e); }
+      try { subscribeRealtime(); } catch (e) { console.error("realtime", e); }
+      try {
+        updateWeather();
+        setInterval(updateWeather, 8 * 60 * 1000);
+      } catch (e) { console.error("weather", e); }
+      const ss = document.getElementById("syncStatus");
+      if (ss) { ss.textContent = "Live sync on"; ss.className = "live"; }
     }
 
     async function loadAll() {
@@ -617,14 +619,28 @@
     }
 
     function openMgrModal() {
-      document.getElementById("mName").value = "";
-      document.getElementById("mPhone").value = "";
-      document.getElementById("mEmail").value = "";
-      renderMgrList();
-      document.getElementById("mgrModal").classList.add("open");
+      try {
+        const modal = document.getElementById("mgrModal");
+        if (!modal) { alert("Manager panel missing — re-upload latest file"); return; }
+        const n = document.getElementById("mName");
+        const ph = document.getElementById("mPhone");
+        const em = document.getElementById("mEmail");
+        if (n) n.value = "";
+        if (ph) ph.value = "";
+        if (em) em.value = "";
+        renderMgrList();
+        modal.classList.add("open");
+        modal.style.display = "flex";
+      } catch (e) {
+        console.error(e);
+        alert("Could not open managers: " + e.message);
+      }
     }
     function closeMgrModal() {
-      document.getElementById("mgrModal").classList.remove("open");
+      const modal = document.getElementById("mgrModal");
+      if (!modal) return;
+      modal.classList.remove("open");
+      modal.style.display = "none";
     }
 
     function renderMgrList() {
@@ -700,9 +716,11 @@
     function updateDutyRule() {
       const total = ["fh1","fh2","fh3","fh4","fh5","fh6"].reduce((s, id) => s + parseHours(id), 0);
       const rounded = Math.round(total * 10) / 10;
-      document.getElementById("hoursTotal").textContent = "Total: " + rounded.toFixed(1);
+      const totEl = document.getElementById("hoursTotal");
+      if (totEl) totEl.textContent = "Total: " + rounded.toFixed(1);
 
       const el = document.getElementById("dutyRule");
+      if (!el) return;
       el.classList.remove("warn", "ok");
 
       // Day Only (Dual Pilot): 41.1 – 48.0 cumulative in consecutive 6-day period → one 24-hour period off
@@ -721,9 +739,10 @@
     }
 
     function setToday() {
+      const el = document.getElementById("date");
+      if (!el) return;
       const d = new Date();
-      document.getElementById("date").value =
-        `${d.getMonth()+1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
+      el.value = `${d.getMonth()+1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
     }
 
     function flashStatus(msg) {
@@ -820,6 +839,18 @@
       }
     }
     function refreshWeather() { updateWeather(); }
+
+    // Expose for inline onclick handlers
+    window.openMgrModal = openMgrModal;
+    window.closeMgrModal = closeMgrModal;
+    window.addOrUpdateMgr = addOrUpdateMgr;
+    window.editMgr = editMgr;
+    window.deleteMgr = deleteMgr;
+    window.saveBoard = saveBoard;
+    window.clearBoard = clearBoard;
+    window.refreshWeather = refreshWeather;
+    window.toggleTvMode = toggleTvMode;
+    window.onMgrSelect = onMgrSelect;
 
     startApp();
 
