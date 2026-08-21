@@ -123,16 +123,43 @@
     .temp-source { font-size: 0.5rem; color: #777; }
     .temp-block.blink .temp-source { color: inherit; opacity: 0.85; }
     .hours-row {
-      display: grid; grid-template-columns: auto 1fr; gap: 6px; align-items: center; margin-top: 2px;
+      display: flex; flex-direction: column; gap: 6px; margin-top: 4px;
+    }
+    .hours-label-row {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
     }
     .hours-label {
       color: #fff; font-weight: 800; font-size: 0.72rem; letter-spacing: 0.04em;
       text-transform: uppercase; text-shadow: 0 1px 1px rgba(0,0,0,0.35); white-space: nowrap;
     }
     .arrow { color: #fff; font-size: 1rem; font-weight: 700; opacity: 0.9; }
-    .hours-slots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
-    .hours-slots .paper { min-height: 44px; }
-    .hours-slots input { font-size: 1.25rem; }
+    .hours-total {
+      margin-left: auto; color: #fff; font-size: 0.78rem; font-weight: 700;
+      background: rgba(0,0,0,0.25); padding: 3px 8px; border-radius: 3px;
+    }
+    .hours-slots { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
+    .hours-day-cell { display: flex; flex-direction: column; gap: 2px; }
+    .hours-day-label {
+      color: rgba(255,255,255,0.9); font-size: 0.58rem; font-weight: 700;
+      text-align: center; text-transform: uppercase; letter-spacing: 0.03em;
+    }
+    .hours-slots .paper { min-height: 40px; }
+    .hours-slots input { font-size: 1.15rem; }
+    .duty-rule {
+      margin-top: 2px; padding: 7px 10px; border-radius: 3px;
+      font-size: 0.78rem; font-weight: 700; text-align: center;
+      background: rgba(255,255,255,0.12); color: #e8f0ff;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+    .duty-rule.warn {
+      background: #c62828; color: #fff; border-color: #8e0000;
+      animation: pulseWarn 1.4s ease-in-out infinite;
+    }
+    .duty-rule.ok { background: rgba(27,122,78,0.85); color: #fff; border-color: #145c3a; }
+    @keyframes pulseWarn {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.82; }
+    }
 
     .controls {
       display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
@@ -324,17 +351,38 @@
         </div>
 
         <div class="hours-row">
-          <div style="display:flex;align-items:center;gap:4px;">
-            <div class="hours-label">Flight Hours</div>
+          <div class="hours-label-row">
+            <div class="hours-label">Flight Hours (6-Day)</div>
             <span class="arrow">→</span>
+            <div class="hours-total" id="hoursTotal">Total: 0.0</div>
           </div>
           <div class="hours-slots">
-            <div class="paper"><input type="number" id="fh1" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
-            <div class="paper"><input type="number" id="fh2" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
-            <div class="paper"><input type="number" id="fh3" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
-            <div class="paper"><input type="number" id="fh4" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
-            <div class="paper"><input type="number" id="fh5" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
+            <div class="hours-day-cell">
+              <div class="hours-day-label">Day 1</div>
+              <div class="paper"><input type="number" id="fh1" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
+            </div>
+            <div class="hours-day-cell">
+              <div class="hours-day-label">Day 2</div>
+              <div class="paper"><input type="number" id="fh2" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
+            </div>
+            <div class="hours-day-cell">
+              <div class="hours-day-label">Day 3</div>
+              <div class="paper"><input type="number" id="fh3" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
+            </div>
+            <div class="hours-day-cell">
+              <div class="hours-day-label">Day 4</div>
+              <div class="paper"><input type="number" id="fh4" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
+            </div>
+            <div class="hours-day-cell">
+              <div class="hours-day-label">Day 5</div>
+              <div class="paper"><input type="number" id="fh5" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
+            </div>
+            <div class="hours-day-cell">
+              <div class="hours-day-label">Day 6</div>
+              <div class="paper"><input type="number" id="fh6" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
+            </div>
           </div>
+          <div class="duty-rule" id="dutyRule">Day Only (Dual Pilot): enter hours Day 1 → Day 6</div>
         </div>
       </div>
     </div>
@@ -355,7 +403,7 @@
     <span id="syncStatus">Connecting…</span>
   </div>
 
-  <div id="mgrModal">
+  <div id="mgrModal" onclick="if(event.target===this)closeMgrModal()">
     <div class="modal-box">
       <h3>Manage Managers</h3>
       <label>Name</label>
@@ -381,7 +429,7 @@
       "aab1","aab2","aab3",
       "incident","hobbs","timeUp","timeDown","cutoff",
       "pic","sic","mech","fuelDriver",
-      "fh1","fh2","fh3","fh4","fh5"
+      "fh1","fh2","fh3","fh4","fh5","fh6"
     ];
 
     let managers = [];
@@ -392,6 +440,7 @@
     async function startApp() {
       setToday();
       setupBoardListeners();
+      updateDutyRule();
       await loadAll();
       subscribeRealtime();
       updateWeather();
@@ -434,10 +483,12 @@
       document.getElementById("fh3").value = data.fh3 || "";
       document.getElementById("fh4").value = data.fh4 || "";
       document.getElementById("fh5").value = data.fh5 || "";
+      document.getElementById("fh6").value = data.fh6 || "";
       document.getElementById("notesField").value = data.notes || "";
       selectedMgrId = data.selected_manager_id || null;
       document.getElementById("mgrSelect").value = selectedMgrId || "";
       onMgrSelect();
+      updateDutyRule();
       applyingRemote = false;
     }
 
@@ -468,6 +519,7 @@
         fh3: document.getElementById("fh3").value,
         fh4: document.getElementById("fh4").value,
         fh5: document.getElementById("fh5").value,
+        fh6: document.getElementById("fh6").value,
         notes: document.getElementById("notesField").value,
         selected_manager_id: selectedMgrId || null,
         updated_at: new Date().toISOString()
@@ -485,8 +537,8 @@
       BOARD_FIELDS.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
-          el.addEventListener("input", queueSave);
-          el.addEventListener("change", queueSave);
+          el.addEventListener("input", () => { queueSave(); if (id.startsWith("fh")) updateDutyRule(); });
+          el.addEventListener("change", () => { queueSave(); if (id.startsWith("fh")) updateDutyRule(); });
         }
       });
     }
@@ -528,6 +580,7 @@
             document.getElementById("fh3").value = d.fh3 || "";
             document.getElementById("fh4").value = d.fh4 || "";
             document.getElementById("fh5").value = d.fh5 || "";
+            document.getElementById("fh6").value = d.fh6 || "";
             document.getElementById("notesField").value = d.notes || "";
             selectedMgrId = d.selected_manager_id || null;
             document.getElementById("mgrSelect").value = selectedMgrId || "";
@@ -638,6 +691,35 @@
       renderMgrList();
     }
 
+
+    function parseHours(id) {
+      const v = parseFloat(document.getElementById(id).value);
+      return isNaN(v) ? 0 : v;
+    }
+
+    function updateDutyRule() {
+      const total = ["fh1","fh2","fh3","fh4","fh5","fh6"].reduce((s, id) => s + parseHours(id), 0);
+      const rounded = Math.round(total * 10) / 10;
+      document.getElementById("hoursTotal").textContent = "Total: " + rounded.toFixed(1);
+
+      const el = document.getElementById("dutyRule");
+      el.classList.remove("warn", "ok");
+
+      // Day Only (Dual Pilot): 41.1 – 48.0 cumulative in consecutive 6-day period → one 24-hour period off
+      if (rounded >= 41.1 && rounded <= 48.0) {
+        el.classList.add("warn");
+        el.textContent = "⚠ Day Only (Dual Pilot): " + rounded.toFixed(1) + " hrs in 6 days — requires one (1) 24-hour period OFF";
+      } else if (rounded > 48.0) {
+        el.classList.add("warn");
+        el.textContent = "⚠ " + rounded.toFixed(1) + " hrs exceeds 48.0 in 6-day period — review duty limitations";
+      } else if (rounded > 0) {
+        el.classList.add("ok");
+        el.textContent = "Day Only (Dual Pilot): " + rounded.toFixed(1) + " / 41.0 hrs — under threshold (41.1–48.0 needs 24-hr off)";
+      } else {
+        el.textContent = "Day Only (Dual Pilot): enter hours Day 1 → Day 6 (41.1–48.0 cumulative needs one 24-hr off)";
+      }
+    }
+
     function setToday() {
       const d = new Date();
       document.getElementById("date").value =
@@ -655,13 +737,23 @@
       document.body.classList.toggle("tv-mode");
     }
 
-    // Weather
+    // Weather (Open-Meteo primary — works in browser; NWS secondary)
     const KMER = { lat: 37.3805, lon: -120.5682 };
     const FISH = { lat: 37.47675, lon: -119.63828 };
-    const NWS_HEADERS = { "User-Agent": "CastleHelibaseBoard (ops@local)", "Accept": "application/geo+json" };
     let prevKmerC = null, prevFishC = null;
 
+    async function fetchOpenMeteoTempC(lat, lon) {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m&temperature_unit=celsius`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("open-meteo");
+      const data = await res.json();
+      const t = data.current && data.current.temperature_2m;
+      if (typeof t !== "number") throw new Error("no temp");
+      return t;
+    }
+
     async function fetchKmerTempC() {
+      // Try aviationweather METAR first
       try {
         const res = await fetch("https://aviationweather.gov/api/data/metar?ids=KMER&format=json");
         if (res.ok) {
@@ -680,43 +772,15 @@
           }
         }
       } catch (e) {}
-      return fetchNwsPointTempC(KMER.lat, KMER.lon);
+      return fetchOpenMeteoTempC(KMER.lat, KMER.lon);
     }
 
-    async function fetchNwsPointTempC(lat, lon) {
-      const ptRes = await fetch(`https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`, { headers: NWS_HEADERS });
-      if (!ptRes.ok) throw new Error("points");
-      const pt = await ptRes.json();
-      const stationsUrl = pt.properties && pt.properties.observationStations;
-      if (stationsUrl) {
-        const stRes = await fetch(stationsUrl, { headers: NWS_HEADERS });
-        if (stRes.ok) {
-          const stData = await stRes.json();
-          for (const s of (stData.features || []).slice(0, 4)) {
-            try {
-              const oRes = await fetch(s.id + "/observations/latest", { headers: NWS_HEADERS });
-              if (!oRes.ok) continue;
-              const obs = await oRes.json();
-              const t = obs.properties && obs.properties.temperature && obs.properties.temperature.value;
-              if (typeof t === "number") return t;
-            } catch (e) {}
-          }
-        }
+    async function fetchFishTempC() {
+      try {
+        return await fetchOpenMeteoTempC(FISH.lat, FISH.lon);
+      } catch (e) {
+        throw e;
       }
-      const hourlyUrl = pt.properties && pt.properties.forecastHourly;
-      if (hourlyUrl) {
-        const hRes = await fetch(hourlyUrl, { headers: NWS_HEADERS });
-        if (hRes.ok) {
-          const hData = await hRes.json();
-          const period = hData.properties && hData.properties.periods && hData.properties.periods[0];
-          if (period && typeof period.temperature === "number") {
-            const unit = (period.temperatureUnit || "F").toUpperCase();
-            if (unit.startsWith("F")) return (period.temperature - 32) * 5 / 9;
-            return period.temperature;
-          }
-        }
-      }
-      throw new Error("no temp");
     }
 
     function formatTemp(c) {
@@ -732,12 +796,12 @@
 
     async function updateWeather() {
       const status = document.getElementById("weatherStatus");
-      status.textContent = "Updating NWS…";
+      status.textContent = "Updating…";
       status.className = "";
       try {
         const [kmerC, fishC] = await Promise.all([
           fetchKmerTempC(),
-          fetchNwsPointTempC(FISH.lat, FISH.lon)
+          fetchFishTempC()
         ]);
         document.getElementById("tempKmer").textContent = formatTemp(kmerC);
         document.getElementById("tempFish").textContent = formatTemp(fishC);
@@ -747,16 +811,18 @@
         prevFishC = fishC;
         document.getElementById("weatherTime").textContent =
           new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-        status.textContent = "NWS Live";
+        status.textContent = "Live";
         status.className = "live";
       } catch (e) {
-        status.textContent = "NWS error – retrying";
+        console.error(e);
+        status.textContent = "Weather error – retry";
         status.className = "";
       }
     }
     function refreshWeather() { updateWeather(); }
 
     startApp();
+
   </script>
 </body>
 </html>
