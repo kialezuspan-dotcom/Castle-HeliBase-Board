@@ -226,18 +226,15 @@
       <!-- LEFT: text / contact info (like original whiteboard) -->
       <div class="left-panel">
         <div>
-          <div class="section-title">Closest AABs</div>
+          <div class="section-title">Closest AAB</div>
           <div class="aab-list">
             <div class="aab-row">
-              <label>AAB 1</label>
               <input type="text" id="aab1" placeholder="Name / phone / info" autocomplete="off" />
             </div>
             <div class="aab-row">
-              <label>AAB 2</label>
               <input type="text" id="aab2" placeholder="Name / phone / info" autocomplete="off" />
             </div>
             <div class="aab-row">
-              <label>AAB 3</label>
               <input type="text" id="aab3" placeholder="Name / phone / info" autocomplete="off" />
             </div>
           </div>
@@ -264,7 +261,7 @@
 
         <div class="notes-area">
           <div class="section-title">Notes / Information</div>
-          <textarea id="notesField" placeholder="Add information here…" onchange="saveBoard()" onblur="saveBoard()"></textarea>
+          <textarea id="notesField" placeholder="Add information here…" ></textarea>
         </div>
       </div>
 
@@ -439,7 +436,7 @@
 
     async function startApp() {
       try { setToday(); } catch (e) { console.error("setToday", e); }
-      try { setupBoardListeners(); } catch (e) { console.error("listeners", e); }
+      try { setupBoardListeners(); attachTimeFormatter("timeUp"); attachTimeFormatter("timeDown"); attachTimeFormatter("cutoff"); } catch (e) { console.error("listeners", e); }
       try { updateDutyRule(); } catch (e) { console.error("duty", e); }
       try { await loadAll(); } catch (e) { console.error("loadAll", e); }
       try { subscribeRealtime(); } catch (e) { console.error("realtime", e); }
@@ -536,11 +533,12 @@
     }
 
     function setupBoardListeners() {
+      // Manual save only — bottom "Save Board" button
       BOARD_FIELDS.forEach(id => {
         const el = document.getElementById(id);
-        if (el) {
-          el.addEventListener("input", () => { queueSave(); if (id.startsWith("fh")) updateDutyRule(); });
-          el.addEventListener("change", () => { queueSave(); if (id.startsWith("fh")) updateDutyRule(); });
+        if (el && id.startsWith("fh")) {
+          el.addEventListener("input", updateDutyRule);
+          el.addEventListener("change", updateDutyRule);
         }
       });
     }
@@ -615,7 +613,7 @@
       document.getElementById("mgrName").textContent = m ? (m.name || "—") : "—";
       document.getElementById("mgrPhone").textContent = m ? (m.phone || "—") : "—";
       document.getElementById("mgrEmail").textContent = m ? (m.email || "—") : "—";
-      if (!applyingRemote) queueSave();
+      /* manual save only */
     }
 
     function openMgrModal() {
@@ -736,6 +734,42 @@
       } else {
         el.textContent = "Day Only (Dual Pilot): enter hours Day 1 → Day 6 (41.1–48.0 cumulative needs one 24-hr off)";
       }
+    }
+
+
+    function formatTimeInput(el) {
+      // Keep only digits, max 4 (HHMM)
+      let digits = (el.value || "").replace(/\D/g, "").slice(0, 4);
+      if (digits.length >= 3) {
+        el.value = digits.slice(0, 2) + ":" + digits.slice(2);
+      } else {
+        el.value = digits;
+      }
+    }
+
+    function attachTimeFormatter(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("input", () => {
+        const start = el.selectionStart;
+        const oldLen = el.value.length;
+        formatTimeInput(el);
+        // simple caret handling after insert
+        const newLen = el.value.length;
+        if (typeof start === "number") {
+          const adj = newLen - oldLen;
+          const pos = Math.max(0, start + adj);
+          try { el.setSelectionRange(pos, pos); } catch (e) {}
+        }
+      });
+      el.addEventListener("blur", () => {
+        // normalize to HH:MM if 3-4 digits entered
+        let digits = (el.value || "").replace(/\D/g, "").slice(0, 4);
+        if (digits.length === 3) digits = "0" + digits; // e.g. 918 -> 09:18
+        if (digits.length === 4) {
+          el.value = digits.slice(0, 2) + ":" + digits.slice(2);
+        }
+      });
     }
 
     function setToday() {
