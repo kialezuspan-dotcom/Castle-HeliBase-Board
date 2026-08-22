@@ -69,12 +69,36 @@
       font-weight: 700; color: var(--marker); margin-bottom: 6px; word-break: break-all;
     }
     .contact-card .val:last-child { margin-bottom: 0; }
-    .notes-area { flex: 1; display: flex; flex-direction: column; min-height: 120px; }
+
+    .notes-area { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 120px; }
     .notes-area textarea {
       flex: 1; width: 100%; min-height: 110px; padding: 10px; font-size: 0.9rem;
       font-family: inherit; border: 2px solid #555; border-radius: 3px; resize: vertical;
       background: #fff; color: var(--marker); line-height: 1.4;
+      overflow: hidden; field-sizing: content;
     }
+    body.display-mode .notes-area textarea {
+      min-height: auto;
+      height: auto !important;
+      overflow: visible;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .loadcalc-preview {
+      display: none; margin-top: 8px; width: 100%;
+      border: 1px solid #bbb; border-radius: 4px; overflow: hidden;
+      background: #fff; min-height: 220px; max-height: 480px;
+    }
+    .loadcalc-preview.show { display: block; }
+    .loadcalc-preview iframe {
+      width: 100%; height: 360px; border: 0; background: #f5f5f5;
+    }
+    body.display-mode .loadcalc-preview.show { display: block; }
+    body.display-mode .loadcalc-preview iframe { height: 420px; }
+    .left-panel {
+      overflow: visible;
+    }
+
 
     /* RIGHT – blue tape status board */
     .right-panel {
@@ -539,6 +563,9 @@
             <a class="open-link disabled" id="loadCalcOpen" href="#" target="_blank" rel="noopener">Open</a>
           </div>
           <div class="loadcalc-status" id="loadCalcStatus"></div>
+          <div class="loadcalc-preview" id="loadCalcPreview">
+            <iframe id="loadCalcFrame" title="Load Calc PDF"></iframe>
+          </div>
         </div>
       </div>
 
@@ -1009,6 +1036,8 @@
       refreshHourLabels();
       updateDutyRule();
       applyingRemote = false;
+      try { autosizeNotes(); } catch (e) {}
+      try { updateLoadCalcLink(); } catch (e) {}
       if (isDisplayOnly || document.body.classList.contains("display-mode")) {
         document.querySelectorAll("input, textarea").forEach(el => {
           if (!el.value) {
@@ -1092,8 +1121,9 @@
       });
       const notes = document.getElementById("notesField");
       if (notes) {
-        notes.addEventListener("input", scheduleAutoSave);
-        notes.addEventListener("change", scheduleAutoSave);
+        notes.addEventListener("input", () => { autosizeNotes(); scheduleAutoSave(); });
+        notes.addEventListener("change", () => { autosizeNotes(); scheduleAutoSave(); });
+        setTimeout(autosizeNotes, 0);
       }
       const lcu = document.getElementById("loadCalcUrl");
       if (lcu) {
@@ -1313,7 +1343,9 @@
         el.classList.add("ok");
         el.textContent = rule.label + ": " + rounded.toFixed(1) + " / " + rule.one.toFixed(1) + " hrs (1 day off) · " + rule.two.toFixed(1) + " hrs (2 days off)";
       } else {
-        el.textContent = rule.label + ": enter hours under dated columns (left=oldest, right=today)";
+        // No flight hours in rolling 6-day window
+        el.classList.add("warn");
+        el.textContent = "⚠ PROFICIENCY FLIGHT NEEDED — 0.0 hrs in the last 6 days";
       }
     }
 
@@ -1849,17 +1881,42 @@
       await writeAudit("load_calc_upload", safeName);
     }
 
+
+    function autosizeNotes() {
+      const ta = document.getElementById("notesField");
+      if (!ta) return;
+      ta.style.height = "auto";
+      const h = Math.max(110, ta.scrollHeight);
+      ta.style.height = h + "px";
+    }
+
     function updateLoadCalcLink() {
       const input = document.getElementById("loadCalcUrl");
       const a = document.getElementById("loadCalcOpen");
+      const preview = document.getElementById("loadCalcPreview");
+      const frame = document.getElementById("loadCalcFrame");
       if (!input || !a) return;
       const url = (input.value || "").trim();
       if (url && /^https?:\/\//i.test(url)) {
         a.href = url;
         a.classList.remove("disabled");
+        if (preview && frame) {
+          // Show PDF (and many browser-viewable docs) embedded on the board
+          const isPdf = /\.pdf($|\?)/i.test(url) || /load-calcs/i.test(url);
+          if (isPdf || url) {
+            if (frame.getAttribute("src") !== url) frame.src = url;
+            preview.classList.add("show");
+          } else {
+            preview.classList.remove("show");
+          }
+        }
       } else {
         a.href = "#";
         a.classList.add("disabled");
+        if (preview && frame) {
+          preview.classList.remove("show");
+          frame.removeAttribute("src");
+        }
       }
     }
 
