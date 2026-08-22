@@ -202,9 +202,84 @@
     }
     .mgr-list-item button { font-size: 0.7rem; padding: 3px 8px; }
 
+    /* Scale to screen */
+    html { font-size: clamp(13px, 1.15vw + 0.3rem, 20px); }
+    body { min-height: 100dvh; }
+    .app-wrap { max-width: min(1400px, 100%); }
+    .outer-frame { max-height: none; }
+
     body.tv-mode .paper input, body.tv-mode .temp-value { font-size: 1.45rem; }
     body.tv-mode .hours-slots input { font-size: 1.6rem; }
     body.tv-mode .tape-label { font-size: 0.85rem; }
+
+    /* ===== DISPLAY MODE (clean presentation, no edit chrome) ===== */
+    body.display-mode {
+      padding: 8px;
+      background: #1a1a1a;
+    }
+    body.display-mode .outer-frame {
+      box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+      width: 100%;
+      max-width: 1600px;
+    }
+    body.display-mode input,
+    body.display-mode select,
+    body.display-mode textarea {
+      pointer-events: none !important;
+      border: none !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      caret-color: transparent;
+      outline: none !important;
+      color: #111 !important;
+      font-weight: 800 !important;
+    }
+    body.display-mode .paper {
+      background: #fff;
+      border: 1px solid #ddd;
+      min-height: 2.4rem;
+    }
+    body.display-mode .paper input {
+      font-size: 1.25rem;
+    }
+    body.display-mode .left-panel input,
+    body.display-mode .left-panel textarea {
+      border: none !important;
+      background: #fff !important;
+      padding: 8px 10px;
+    }
+    body.display-mode .left-panel textarea {
+      resize: none;
+      min-height: 6rem;
+    }
+    body.display-mode .btn-small,
+    body.display-mode .mgr-select-row select {
+      display: none !important;
+    }
+    body.display-mode .mgr-select-row::after {
+      content: none;
+    }
+    body.display-mode .contact-card {
+      border: 1px solid #bbb;
+    }
+    body.display-mode .edit-only { display: none !important; }
+    body.display-mode .status-bar { display: none !important; }
+    body.display-mode .tape-label { font-size: 0.85rem; }
+    body.display-mode .temp-value { font-size: 1.35rem; }
+    body.display-mode .hours-slots input { font-size: 1.35rem; }
+    body.display-mode .hours-day-label { font-size: 0.7rem; }
+    body.display-mode .duty-rule { font-size: 0.9rem; padding: 10px; }
+
+    #exitDisplayBtn {
+      display: none;
+      position: fixed; bottom: 16px; right: 16px; z-index: 10000;
+      background: #1e4d8c; color: #fff; border: none; border-radius: 6px;
+      padding: 12px 18px; font-size: 0.95rem; font-weight: 700;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.35); cursor: pointer;
+    }
+    body.display-mode #exitDisplayBtn { display: block; }
+    body.display-mode #controls { display: none !important; }
+
 
     @media (max-width: 800px) {
       .outer-frame { flex-direction: column; }
@@ -246,7 +321,7 @@
             <select id="mgrSelect" onchange="onMgrSelect()">
               <option value="">— Select manager —</option>
             </select>
-            <button class="btn-small" onclick="openMgrModal()">Manage</button>
+            <button class="btn-small edit-only" onclick="openMgrModal()">Manage</button>
           </div>
         </div>
 
@@ -388,9 +463,11 @@
   <div class="controls" id="controls">
     <button class="ctrl success" onclick="saveBoard()">Save Board</button>
     <button class="ctrl secondary" onclick="refreshWeather()">Refresh Weather</button>
-    <button class="ctrl secondary" onclick="toggleTvMode()">TV / Large Screen</button>
-    <button class="ctrl danger" onclick="clearBoard()">Clear Board</button>
+    <button class="ctrl secondary" onclick="enterDisplayMode()">Display Mode</button>
+    <button class="ctrl secondary edit-only" onclick="toggleTvMode()">Larger Text</button>
+    <button class="ctrl danger edit-only" onclick="clearBoard()">Clear Board</button>
   </div>
+  <button type="button" id="exitDisplayBtn" onclick="exitDisplayMode()">Exit Display Mode</button>
 
   <div class="status-bar" id="statusBar">
     Weather: <span id="weatherTime">—</span>
@@ -790,6 +867,26 @@
       document.body.classList.toggle("tv-mode");
     }
 
+    function enterDisplayMode() {
+      // save first so display is current
+      try { saveBoard(); } catch (e) {}
+      document.body.classList.add("display-mode");
+      document.body.classList.remove("tv-mode");
+      // hide empty placeholders look
+      document.querySelectorAll("input, textarea").forEach(el => {
+        if (!el.value && el.placeholder) el.setAttribute("data-ph", el.placeholder);
+        el.placeholder = "";
+      });
+    }
+    function exitDisplayMode() {
+      document.body.classList.remove("display-mode");
+      document.querySelectorAll("input, textarea").forEach(el => {
+        const ph = el.getAttribute("data-ph");
+        if (ph) { el.placeholder = ph; el.removeAttribute("data-ph"); }
+      });
+    }
+
+
     // Weather (Open-Meteo primary — works in browser; NWS secondary)
     const KMER = { lat: 37.3805, lon: -120.5682 };
     const FISH = { lat: 37.47675, lon: -119.63828 };
@@ -884,6 +981,8 @@
     window.clearBoard = clearBoard;
     window.refreshWeather = refreshWeather;
     window.toggleTvMode = toggleTvMode;
+    window.enterDisplayMode = enterDisplayMode;
+    window.exitDisplayMode = exitDisplayMode;
     window.onMgrSelect = onMgrSelect;
 
     startApp();
