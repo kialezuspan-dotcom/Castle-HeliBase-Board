@@ -328,6 +328,15 @@
     body.display-mode #exitDisplayBtn { display: block; }
     body.display-mode #controls { display: none !important; }
 
+    body.display-mode input::placeholder,
+    body.display-mode textarea::placeholder,
+    body.viewer-mode input::placeholder,
+    body.viewer-mode textarea::placeholder {
+      color: transparent !important;
+      opacity: 0 !important;
+    }
+
+
     .loadcalc-warn {
       display: none;
       margin-top: 8px;
@@ -885,6 +894,13 @@
       const exitBtn = document.getElementById("exitDisplayBtn");
       if (exitBtn) exitBtn.style.display = "none"; // pure TV mode — no exit chrome
       await startApp();
+      // Hide placeholder text on empty fields (notes, times, etc.) for both bases
+      document.querySelectorAll("input, textarea").forEach(el => {
+        if (!el.value && el.placeholder) {
+          el.setAttribute("data-ph", el.placeholder);
+          el.placeholder = "";
+        }
+      });
     }
 
     async function startApp() {
@@ -993,6 +1009,16 @@
       refreshHourLabels();
       updateDutyRule();
       applyingRemote = false;
+      if (isDisplayOnly || document.body.classList.contains("display-mode")) {
+        document.querySelectorAll("input, textarea").forEach(el => {
+          if (!el.value) {
+            if (el.placeholder && !el.getAttribute("data-ph")) {
+              el.setAttribute("data-ph", el.placeholder);
+            }
+            el.placeholder = "";
+          }
+        });
+      }
     }
 
     function queueSave() {
