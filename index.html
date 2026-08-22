@@ -452,13 +452,13 @@
     .loadcalc-row a.open-link.disabled {
       background: #999; pointer-events: none;
     }
-    body.display-mode .loadcalc-row input { border: none !important; }
-    body.display-mode .loadcalc-row a.open-link { display: inline-flex; }
+    body.display-mode .loadcalc-row { display: none !important; }
+    body.display-mode .loadcalc-status { display: none !important; }
 
     /* Print */
     @media print {
       body { background: #fff !important; padding: 0 !important; }
-      #loginScreen, #controls, #statusBar, #exitDisplayBtn,
+      #loginScreen, #controls, #statusBar, #exitDisplayBtn, #kioskBtn,
       .autosave-hint, .history-panel, .edit-only, #mgrModal { display: none !important; }
       .app-wrap, .outer-frame { max-width: none; width: 100%; box-shadow: none; }
       body.display-mode .outer-frame { box-shadow: none; }
@@ -484,7 +484,7 @@
       font-size: 0.65rem; font-weight: 800; letter-spacing: 0.08em;
       padding: 2px 8px; border-radius: 3px; margin-left: 6px;
     }
-    body.display-mode .loadcalc-drop { pointer-events: none; }
+    body.display-mode .loadcalc-drop { display: none !important; }
 
 
     .loadcalc-meta {
@@ -511,6 +511,27 @@
     }
     #conflictBanner button.secondary {
       background: transparent; color: #fff; border: 2px solid #fff;
+    }
+
+
+    #kioskBtn {
+      display: none;
+      position: fixed; bottom: 16px; left: 16px; z-index: 10000;
+      background: #1e4d8c; color: #fff; border: none; border-radius: 6px;
+      padding: 12px 18px; font-size: 0.95rem; font-weight: 700;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.35); cursor: pointer;
+    }
+    body.display-mode #kioskBtn { display: block; }
+    body.display-mode.kiosk-fs #kioskBtn {
+      opacity: 0.35;
+    }
+    body.display-mode.kiosk-fs #kioskBtn:hover,
+    body.display-mode.kiosk-fs #kioskBtn:focus {
+      opacity: 1;
+    }
+    /* Keep standard board cells always visible (incident, times, etc.) */
+    body.display-mode .cell .paper {
+      min-height: 40px;
     }
 
   </style>
@@ -738,6 +759,7 @@
     <button class="ctrl secondary" onclick="refreshWeather()">Refresh Weather</button>
     <button class="ctrl secondary edit-only" onclick="enterDisplayMode()">Display Mode</button>
     <button class="ctrl secondary" onclick="toggleTvMode()">Larger Text</button>
+    <button class="ctrl secondary" onclick="toggleKioskFullscreen()">Fullscreen</button>
     <button class="ctrl secondary" onclick="printBoard()">Print / PDF</button>
     <button class="ctrl ghost edit-only" onclick="toggleIncidentHistory()">Incident Log</button>
     <button class="ctrl ghost edit-only" onclick="toggleAuditLog()">Audit Trail</button>
@@ -765,6 +787,7 @@
   </div>
 
   <button type="button" id="exitDisplayBtn" onclick="exitDisplayMode()">Exit Display Mode</button>
+  <button type="button" id="kioskBtn" onclick="toggleKioskFullscreen()">Fullscreen</button>
 
   <div class="status-bar" id="statusBar">
     Weather: <span id="weatherTime">—</span>
@@ -2134,6 +2157,40 @@
       }
     }
 
+
+    function toggleKioskFullscreen() {
+      const btn = document.getElementById("kioskBtn");
+      try {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().then(() => {
+            document.body.classList.add("kiosk-fs");
+            if (btn) btn.textContent = "Exit Fullscreen";
+          }).catch(() => {
+            // iOS / restricted browsers — fall back to display-mode only
+            flashStatus("Fullscreen not allowed by this browser — use Display Mode");
+          });
+        } else {
+          document.exitFullscreen().then(() => {
+            document.body.classList.remove("kiosk-fs");
+            if (btn) btn.textContent = "Fullscreen";
+          }).catch(() => {});
+        }
+      } catch (e) {
+        flashStatus("Fullscreen not supported on this device");
+      }
+    }
+
+    document.addEventListener("fullscreenchange", () => {
+      const btn = document.getElementById("kioskBtn");
+      if (!document.fullscreenElement) {
+        document.body.classList.remove("kiosk-fs");
+        if (btn) btn.textContent = "Fullscreen";
+      } else {
+        document.body.classList.add("kiosk-fs");
+        if (btn) btn.textContent = "Exit Fullscreen";
+      }
+    });
+
     function printBoard() {
       // Temporarily use display-style clean print
       const wasDisplay = document.body.classList.contains("display-mode");
@@ -2150,6 +2207,7 @@
     window.toggleIncidentHistory = toggleIncidentHistory;
     window.toggleAuditLog = toggleAuditLog;
     window.printBoard = printBoard;
+    window.toggleKioskFullscreen = toggleKioskFullscreen;
     window.updateLoadCalcLink = updateLoadCalcLink;
     window.resolveConflictReload = resolveConflictReload;
     window.resolveConflictOverwrite = resolveConflictOverwrite;
