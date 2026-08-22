@@ -328,6 +328,32 @@
     body.display-mode #exitDisplayBtn { display: block; }
     body.display-mode #controls { display: none !important; }
 
+    .temp-source.stale { color: #c62828; font-weight: 700; }
+    .history-panel {
+      width: 100%; max-width: 1280px; margin-top: 12px;
+      background: #fff; border: 1px solid #ccc; border-radius: 6px;
+      padding: 12px 14px; display: none;
+    }
+    .history-panel.open { display: block; }
+    .history-panel h3 {
+      font-size: 0.9rem; margin-bottom: 8px; color: #1a1a1a;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .history-panel table {
+      width: 100%; border-collapse: collapse; font-size: 0.8rem;
+    }
+    .history-panel th, .history-panel td {
+      text-align: left; padding: 6px 8px; border-bottom: 1px solid #e0e0e0;
+      vertical-align: top;
+    }
+    .history-panel th { background: #f4f4f0; font-weight: 700; }
+    .history-panel .muted { color: #666; font-size: 0.75rem; }
+    .history-empty { color: #888; font-size: 0.85rem; padding: 8px 0; }
+    body.display-mode .history-panel,
+    body.viewer-mode .history-panel { display: none !important; }
+    .ctrl.ghost { background: #5a6a7a; }
+
+
 
     @media (max-width: 800px) {
       .outer-frame { flex-direction: column; }
@@ -442,12 +468,12 @@
                 <div class="temp-block" id="tempKmerBlock">
                   <div class="temp-elev">~190′ KMER</div>
                   <div class="temp-value" id="tempKmer">--</div>
-                  <div class="temp-source">NWS</div>
+                  <div class="temp-source" id="srcKmer">—</div>
                 </div>
                 <div class="temp-block" id="tempFishBlock">
                   <div class="temp-elev">~5,060′ Fish Camp</div>
                   <div class="temp-value" id="tempFish">--</div>
-                  <div class="temp-source">NWS</div>
+                  <div class="temp-source" id="srcFish">—</div>
                 </div>
               </div>
             </div>
@@ -536,10 +562,31 @@
     <button class="ctrl secondary" onclick="refreshWeather()">Refresh Weather</button>
     <button class="ctrl secondary edit-only" onclick="enterDisplayMode()">Display Mode</button>
     <button class="ctrl secondary" onclick="toggleTvMode()">Larger Text</button>
+    <button class="ctrl ghost edit-only" onclick="toggleIncidentHistory()">Incident Log</button>
+    <button class="ctrl ghost edit-only" onclick="toggleAuditLog()">Audit Trail</button>
     <button class="ctrl danger edit-only" onclick="clearBoard()">Clear Board</button>
     <button class="ctrl secondary edit-only" onclick="doLogout()">Sign Out</button>
   </div>
   <p class="autosave-hint edit-only" id="autosaveHint">Auto-saves 30s after you stop typing · Ctrl/Cmd+S to save now</p>
+
+  <div class="history-panel" id="incidentHistoryPanel">
+    <h3>
+      <span>Incident Log / History</span>
+      <button class="btn-small" onclick="toggleIncidentHistory()">Close</button>
+    </h3>
+    <p class="muted" style="margin-bottom:8px;">Snapshots are saved when the incident name changes on Save.</p>
+    <div id="incidentHistoryBody" class="history-empty">Loading…</div>
+  </div>
+
+  <div class="history-panel" id="auditLogPanel">
+    <h3>
+      <span>Audit Trail</span>
+      <button class="btn-small" onclick="toggleAuditLog()">Close</button>
+    </h3>
+    <p class="muted" style="margin-bottom:8px;">Who saved the board and when (most recent first).</p>
+    <div id="auditLogBody" class="history-empty">Loading…</div>
+  </div>
+
   <button type="button" id="exitDisplayBtn" onclick="exitDisplayMode()">Exit Display Mode</button>
 
   <div class="status-bar" id="statusBar">
@@ -586,6 +633,7 @@
     let currentUser = null;
     let isDisplayOnly = false;
     let dirty = false;
+    let lastIncidentName = null;
 
     // 6-day duty thresholds: [oneDayOff, twoDaysOff]
     const DUTY_RULES = {
@@ -752,6 +800,7 @@
       document.getElementById("aab2").value = data.aab2 || "";
       document.getElementById("aab3").value = data.aab3 || "";
       document.getElementById("incident").value = data.incident || "";
+      lastIncidentName = data.incident || "";
       document.getElementById("hobbs").value = data.hobbs || "";
       document.getElementById("timeUp").value = data.time_up || "";
       document.getElementById("timeDown").value = data.time_down || "";
@@ -824,11 +873,14 @@
       if (error) {
         console.error(error);
         flashStatus("Save failed: " + (error.message || "check login / SQL"));
+        await writeAudit("save_failed", error.message || "unknown");
       } else {
         dirty = false;
         flashStatus("Saved · synced");
         const hint = document.getElementById("autosaveHint");
         if (hint) hint.textContent = "Saved · auto-saves 30s after you stop typing · Ctrl/Cmd+S";
+        await maybeArchiveIncident(payload.incident);
+        await writeAudit("save", payload.incident ? ("incident: " + payload.incident) : "board update");
       }
     }
 
@@ -1164,8 +1216,7 @@
       const data = await res.json();
       const t = data.properties && data.properties.temperature;
       if (!t || typeof t.value !== "number") throw new Error("no obs temp");
-      // NWS obs are in degC
-      return t.value;
+      return { c: t.value, source: "Obs " + stationId };
     }
 
     async function fetchNwsHourlyTempC(hourlyUrl) {
@@ -1174,7 +1225,14 @@
       const data = await res.json();
       const period = data.properties && data.properties.periods && data.properties.periods[0];
       if (!period || typeof period.temperature !== "number") throw new Error("no hourly temp");
-      return toC(period.temperature, period.temperatureUnit || "F");
+      let label = "NWS hourly";
+      if (period.startTime) {
+        try {
+          const t = new Date(period.startTime);
+          label = "NWS " + t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+        } catch (e) {}
+      }
+      return { c: toC(period.temperature, period.temperatureUnit || "F"), source: label };
     }
 
     async function fetchMetarTempC(icao) {
@@ -1183,13 +1241,13 @@
       const data = await res.json();
       if (!Array.isArray(data) || !data.length) throw new Error("no metar");
       const m = data[0];
-      if (typeof m.temp === "number") return m.temp;
+      if (typeof m.temp === "number") return { c: m.temp, source: "METAR " + icao };
       if (m.rawOb) {
         const match = m.rawOb.match(/\s(M?\d{2})\/(M?\d{2})\s/);
         if (match) {
           let t = match[1];
           if (t.startsWith("M")) t = "-" + t.slice(1);
-          return parseInt(t, 10);
+          return { c: parseInt(t, 10), source: "METAR " + icao };
         }
       }
       throw new Error("metar no temp");
@@ -1203,23 +1261,19 @@
       const data = await res.json();
       const t = data.current && data.current.temperature_2m;
       if (typeof t !== "number") throw new Error("no om temp");
-      return t;
+      return { c: t, source: "Open-Meteo" };
     }
 
     async function fetchTempChain(stationIds, hourlyUrl, lat, lon, preferMetarIcao) {
-      // 1) METAR if airport
       if (preferMetarIcao) {
         try { return await fetchMetarTempC(preferMetarIcao); } catch (e) {}
       }
-      // 2) NWS station observations
       for (const id of stationIds) {
         try { return await fetchNwsStationTempC(id); } catch (e) {}
       }
-      // 3) NWS hourly forecast (most reliable right now)
       try { return await fetchNwsHourlyTempC(hourlyUrl); } catch (e) {}
-      // 4) Open-Meteo fallback
       try { return await fetchOpenMeteoTempC(lat, lon); } catch (e) {}
-      return null;
+      return { c: null, source: "unavailable" };
     }
 
     async function fetchKmerTempC() {
@@ -1232,6 +1286,13 @@
     function formatTemp(c) {
       if (c === null || c === undefined || isNaN(c)) return "--";
       return Math.round(c * 9/5 + 32) + "°F / " + Math.round(c) + "°C";
+    }
+
+    function setTempSource(elId, source, ok) {
+      const el = document.getElementById(elId);
+      if (!el) return;
+      el.textContent = source || "—";
+      el.classList.toggle("stale", !ok);
     }
 
     function checkBlink(id, cur, prev) {
@@ -1249,13 +1310,17 @@
           fetchKmerTempC(),
           fetchFishTempC()
         ]);
-        const kmerC = results[0].status === "fulfilled" ? results[0].value : null;
-        const fishC = results[1].status === "fulfilled" ? results[1].value : null;
+        const kmer = results[0].status === "fulfilled" ? results[0].value : { c: null, source: "error" };
+        const fish = results[1].status === "fulfilled" ? results[1].value : { c: null, source: "error" };
+        const kmerC = kmer && typeof kmer.c === "number" ? kmer.c : null;
+        const fishC = fish && typeof fish.c === "number" ? fish.c : null;
 
         const kmerEl = document.getElementById("tempKmer");
         const fishEl = document.getElementById("tempFish");
         if (kmerEl) kmerEl.textContent = formatTemp(kmerC);
         if (fishEl) fishEl.textContent = formatTemp(fishC);
+        setTempSource("srcKmer", kmer ? kmer.source : "—", kmerC !== null);
+        setTempSource("srcFish", fish ? fish.source : "—", fishC !== null);
         checkBlink("tempKmerBlock", kmerC, prevKmerC);
         checkBlink("tempFishBlock", fishC, prevFishC);
         if (kmerC !== null) prevKmerC = kmerC;
@@ -1266,7 +1331,7 @@
 
         if (status) {
           if (kmerC !== null || fishC !== null) {
-            status.textContent = "NWS Live";
+            status.textContent = "Live";
             status.className = "live";
           } else {
             status.textContent = "Weather unavailable – retry";
@@ -1276,9 +1341,150 @@
       } catch (e) {
         console.error(e);
         if (status) { status.textContent = "Weather error – retry"; status.className = ""; }
+        setTempSource("srcKmer", "error", false);
+        setTempSource("srcFish", "error", false);
       }
     }
     function refreshWeather() { updateWeather(); }
+
+    // ===== Incident history + audit =====
+    function snapshotFromForm() {
+      const dm = document.getElementById("dutyMode");
+      return {
+        aab1: document.getElementById("aab1").value,
+        aab2: document.getElementById("aab2").value,
+        aab3: document.getElementById("aab3").value,
+        incident: document.getElementById("incident").value,
+        hobbs: document.getElementById("hobbs").value,
+        time_up: document.getElementById("timeUp").value,
+        time_down: document.getElementById("timeDown").value,
+        cutoff: document.getElementById("cutoff").value,
+        pic: document.getElementById("pic").value,
+        sic: document.getElementById("sic").value,
+        mech: document.getElementById("mech").value,
+        fuel_driver: document.getElementById("fuelDriver").value,
+        fh1: document.getElementById("fh1").value,
+        fh2: document.getElementById("fh2").value,
+        fh3: document.getElementById("fh3").value,
+        fh4: document.getElementById("fh4").value,
+        fh5: document.getElementById("fh5").value,
+        fh6: document.getElementById("fh6").value,
+        notes: document.getElementById("notesField").value,
+        duty_mode: dm ? dm.value : "day_dual",
+        manager_id: selectedMgrId || null
+      };
+    }
+
+    async function writeAudit(action, detail) {
+      if (!currentUser) return;
+      try {
+        await sb.from("audit_log").insert({
+          action: action,
+          detail: detail || "",
+          user_email: currentUser.email || currentUser.id || "unknown"
+        });
+      } catch (e) { console.warn("audit", e); }
+    }
+
+    async function maybeArchiveIncident(newIncident) {
+      const prev = (lastIncidentName || "").trim();
+      const next = (newIncident || "").trim();
+      // Archive previous name when it changes to something different and previous was non-empty
+      if (prev && next && prev !== next) {
+        try {
+          await sb.from("incident_log").insert({
+            incident: prev,
+            snapshot: snapshotFromForm(),
+            created_by: currentUser ? (currentUser.email || currentUser.id) : null
+          });
+        } catch (e) { console.warn("incident_log", e); }
+      }
+      lastIncidentName = next;
+    }
+
+    function toggleIncidentHistory() {
+      const panel = document.getElementById("incidentHistoryPanel");
+      const audit = document.getElementById("auditLogPanel");
+      if (audit) audit.classList.remove("open");
+      if (!panel) return;
+      const opening = !panel.classList.contains("open");
+      panel.classList.toggle("open", opening);
+      if (opening) loadIncidentHistory();
+    }
+
+    function toggleAuditLog() {
+      const panel = document.getElementById("auditLogPanel");
+      const hist = document.getElementById("incidentHistoryPanel");
+      if (hist) hist.classList.remove("open");
+      if (!panel) return;
+      const opening = !panel.classList.contains("open");
+      panel.classList.toggle("open", opening);
+      if (opening) loadAuditLog();
+    }
+
+    async function loadIncidentHistory() {
+      const body = document.getElementById("incidentHistoryBody");
+      if (!body) return;
+      body.innerHTML = '<div class="history-empty">Loading…</div>';
+      const { data, error } = await sb.from("incident_log")
+        .select("id, incident, snapshot, created_at, created_by")
+        .order("created_at", { ascending: false })
+        .limit(40);
+      if (error) {
+        body.innerHTML = '<div class="history-empty">Could not load history. Run Phase 2 SQL?</div>';
+        console.error(error);
+        return;
+      }
+      if (!data || !data.length) {
+        body.innerHTML = '<div class="history-empty">No archived incidents yet. Change the incident name and Save to create a snapshot.</div>';
+        return;
+      }
+      let html = '<table><thead><tr><th>When</th><th>Incident</th><th>By</th><th>Key fields</th></tr></thead><tbody>';
+      data.forEach(row => {
+        const when = row.created_at ? new Date(row.created_at).toLocaleString() : "—";
+        const s = row.snapshot || {};
+        const key = [
+          s.pic ? ("PIC: " + s.pic) : "",
+          s.sic ? ("SIC: " + s.sic) : "",
+          s.hobbs ? ("Hobbs: " + s.hobbs) : "",
+          s.cutoff ? ("Cutoff: " + s.cutoff) : ""
+        ].filter(Boolean).join(" · ") || "—";
+        html += "<tr><td class='muted'>" + when + "</td><td><strong>" +
+          (row.incident || "—") + "</strong></td><td class='muted'>" +
+          (row.created_by || "—") + "</td><td>" + key + "</td></tr>";
+      });
+      html += "</tbody></table>";
+      body.innerHTML = html;
+    }
+
+    async function loadAuditLog() {
+      const body = document.getElementById("auditLogBody");
+      if (!body) return;
+      body.innerHTML = '<div class="history-empty">Loading…</div>';
+      const { data, error } = await sb.from("audit_log")
+        .select("id, action, detail, user_email, created_at")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) {
+        body.innerHTML = '<div class="history-empty">Could not load audit trail. Run Phase 2 SQL?</div>';
+        console.error(error);
+        return;
+      }
+      if (!data || !data.length) {
+        body.innerHTML = '<div class="history-empty">No audit entries yet. Saves will appear here.</div>';
+        return;
+      }
+      let html = '<table><thead><tr><th>When</th><th>User</th><th>Action</th><th>Detail</th></tr></thead><tbody>';
+      data.forEach(row => {
+        const when = row.created_at ? new Date(row.created_at).toLocaleString() : "—";
+        html += "<tr><td class='muted'>" + when + "</td><td>" +
+          (row.user_email || "—") + "</td><td><strong>" +
+          (row.action || "—") + "</strong></td><td class='muted'>" +
+          (row.detail || "") + "</td></tr>";
+      });
+      html += "</tbody></table>";
+      body.innerHTML = html;
+    }
 
     // Expose for inline onclick handlers
     window.openMgrModal = openMgrModal;
@@ -1297,6 +1503,8 @@
     window.doLogout = doLogout;
     window.updateDutyRule = updateDutyRule;
     window.scheduleAutoSave = scheduleAutoSave;
+    window.toggleIncidentHistory = toggleIncidentHistory;
+    window.toggleAuditLog = toggleAuditLog;
 
     document.getElementById("passInput") && document.getElementById("passInput").addEventListener("keydown", e => {
       if (e.key === "Enter") doLogin();
