@@ -1191,13 +1191,13 @@
     }
 
 
-    // Weather — NWS hourly forecast (reliable in browser)
+    // Weather — NWS daily forecast HIGH (matches HIGH TEMP on board)
     // KMER Castle AFB grid HNX/30,133 ; Fish Camp grid HNX/63,131
     const NWS_UA = { "Accept": "application/geo+json" };
+    const KMER_DAILY = "https://api.weather.gov/gridpoints/HNX/30,133/forecast";
+    const FISH_DAILY = "https://api.weather.gov/gridpoints/HNX/63,131/forecast";
     const KMER_HOURLY = "https://api.weather.gov/gridpoints/HNX/30,133/forecast/hourly";
     const FISH_HOURLY = "https://api.weather.gov/gridpoints/HNX/63,131/forecast/hourly";
-    const KMER_STATIONS = ["KMER", "KMCE"];
-    const FISH_STATIONS = ["E7845", "WWNC1", "MPOC1"];
     let prevKmerC = null, prevFishC = null;
 
     function toC(value, unit) {
@@ -1207,16 +1207,18 @@
       return value;
     }
 
-    async function fetchNwsStationTempC(stationId) {
-      const res = await fetch(
-        "https://api.weather.gov/stations/" + stationId + "/observations/latest",
-        { headers: NWS_UA }
-      );
-      if (!res.ok) throw new Error("obs " + stationId);
+    async function fetchNwsDailyHighC(dailyUrl) {
+      const res = await fetch(dailyUrl, { headers: NWS_UA });
+      if (!res.ok) throw new Error("daily " + res.status);
       const data = await res.json();
-      const t = data.properties && data.properties.temperature;
-      if (!t || typeof t.value !== "number") throw new Error("no obs temp");
-      return { c: t.value, source: "Obs " + stationId };
+      const periods = (data.properties && data.properties.periods) || [];
+      // Prefer today's daytime period (isDaytime true) — that temperature is the forecast high
+      let day = periods.find(p => p.isDaytime === true);
+      if (!day) day = periods[0];
+      if (!day || typeof day.temperature !== "number") throw new Error("no daily high");
+      let label = "NWS high";
+      if (day.name) label = "NWS high · " + day.name;
+      return { c: toC(day.temperature, day.temperatureUnit || "F"), source: label };
     }
 
     async function fetchNwsHourlyTempC(hourlyUrl) {
@@ -1225,62 +1227,39 @@
       const data = await res.json();
       const period = data.properties && data.properties.periods && data.properties.periods[0];
       if (!period || typeof period.temperature !== "number") throw new Error("no hourly temp");
-      let label = "NWS hourly";
+      let label = "NWS hourly (fallback)";
       if (period.startTime) {
         try {
           const t = new Date(period.startTime);
-          label = "NWS " + t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+          label = "Hourly " + t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
         } catch (e) {}
       }
       return { c: toC(period.temperature, period.temperatureUnit || "F"), source: label };
     }
 
-    async function fetchMetarTempC(icao) {
-      const res = await fetch("https://aviationweather.gov/api/data/metar?ids=" + icao + "&format=json");
-      if (!res.ok) throw new Error("metar");
-      const data = await res.json();
-      if (!Array.isArray(data) || !data.length) throw new Error("no metar");
-      const m = data[0];
-      if (typeof m.temp === "number") return { c: m.temp, source: "METAR " + icao };
-      if (m.rawOb) {
-        const match = m.rawOb.match(/\s(M?\d{2})\/(M?\d{2})\s/);
-        if (match) {
-          let t = match[1];
-          if (t.startsWith("M")) t = "-" + t.slice(1);
-          return { c: parseInt(t, 10), source: "METAR " + icao };
-        }
-      }
-      throw new Error("metar no temp");
-    }
-
-    async function fetchOpenMeteoTempC(lat, lon) {
+    async function fetchOpenMeteoDailyHighC(lat, lon) {
       const url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat +
-        "&longitude=" + lon + "&current=temperature_2m&temperature_unit=celsius";
+        "&longitude=" + lon + "&daily=temperature_2m_max&temperature_unit=celsius&forecast_days=1";
       const res = await fetch(url);
       if (!res.ok) throw new Error("open-meteo " + res.status);
       const data = await res.json();
-      const t = data.current && data.current.temperature_2m;
-      if (typeof t !== "number") throw new Error("no om temp");
-      return { c: t, source: "Open-Meteo" };
+      const arr = data.daily && data.daily.temperature_2m_max;
+      if (!arr || typeof arr[0] !== "number") throw new Error("no om high");
+      return { c: arr[0], source: "Open-Meteo high" };
     }
 
-    async function fetchTempChain(stationIds, hourlyUrl, lat, lon, preferMetarIcao) {
-      if (preferMetarIcao) {
-        try { return await fetchMetarTempC(preferMetarIcao); } catch (e) {}
-      }
-      for (const id of stationIds) {
-        try { return await fetchNwsStationTempC(id); } catch (e) {}
-      }
+    async function fetchTempHigh(dailyUrl, hourlyUrl, lat, lon) {
+      try { return await fetchNwsDailyHighC(dailyUrl); } catch (e) {}
       try { return await fetchNwsHourlyTempC(hourlyUrl); } catch (e) {}
-      try { return await fetchOpenMeteoTempC(lat, lon); } catch (e) {}
+      try { return await fetchOpenMeteoDailyHighC(lat, lon); } catch (e) {}
       return { c: null, source: "unavailable" };
     }
 
     async function fetchKmerTempC() {
-      return fetchTempChain(KMER_STATIONS, KMER_HOURLY, 37.3805, -120.5682, "KMER");
+      return fetchTempHigh(KMER_DAILY, KMER_HOURLY, 37.3805, -120.5682);
     }
     async function fetchFishTempC() {
-      return fetchTempChain(FISH_STATIONS, FISH_HOURLY, 37.47675, -119.63828, null);
+      return fetchTempHigh(FISH_DAILY, FISH_HOURLY, 37.47675, -119.63828);
     }
 
     function formatTemp(c) {
