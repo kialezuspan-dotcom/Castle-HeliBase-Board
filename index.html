@@ -386,6 +386,54 @@
       .row-3, .row-4, .row-2 { grid-template-columns: 1fr; }
       .hours-slots { grid-template-columns: 1fr 1fr; }
     }
+
+    /* Phase 3: tablet touch targets */
+    @media (pointer: coarse), (max-width: 1024px) {
+      button.ctrl { padding: 14px 18px; font-size: 0.95rem; min-height: 48px; }
+      .btn-small { padding: 12px 14px; font-size: 0.85rem; min-height: 44px; }
+      .aab-row input, .mgr-select-row select, .notes-area textarea,
+      .paper input, .modal-box input, .duty-mode-row select {
+        min-height: 48px; font-size: 1.05rem; padding: 12px 12px;
+      }
+      .mgr-select-row { gap: 10px; }
+      .hours-slots input { min-height: 52px; font-size: 1.2rem; }
+    }
+
+    /* Load calc block */
+    .loadcalc-block {
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .loadcalc-row {
+      display: flex; gap: 6px; align-items: stretch;
+    }
+    .loadcalc-row input {
+      flex: 1; padding: 8px 10px; font-size: 0.9rem; font-weight: 600;
+      border: 2px solid #555; border-radius: 3px; background: #fff;
+      font-family: inherit; min-width: 0;
+    }
+    .loadcalc-row a.open-link {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 8px 12px; background: #1e4d8c; color: #fff; text-decoration: none;
+      border-radius: 3px; font-size: 0.75rem; font-weight: 700; white-space: nowrap;
+    }
+    .loadcalc-row a.open-link.disabled {
+      background: #999; pointer-events: none;
+    }
+    body.display-mode .loadcalc-row input { border: none !important; }
+    body.display-mode .loadcalc-row a.open-link { display: inline-flex; }
+
+    /* Print */
+    @media print {
+      body { background: #fff !important; padding: 0 !important; }
+      #loginScreen, #controls, #statusBar, #exitDisplayBtn,
+      .autosave-hint, .history-panel, .edit-only, #mgrModal { display: none !important; }
+      .app-wrap, .outer-frame { max-width: none; width: 100%; box-shadow: none; }
+      body.display-mode .outer-frame { box-shadow: none; }
+      .paper input, .left-panel input, .left-panel textarea, .duty-mode-row select {
+        border: none !important; background: transparent !important;
+      }
+    }
+
   </style>
 </head>
 <body>
@@ -444,6 +492,14 @@
         <div class="notes-area">
           <div class="section-title">Notes / Information</div>
           <textarea id="notesField" placeholder="Add information here…" ></textarea>
+        </div>
+
+        <div class="loadcalc-block">
+          <div class="section-title">Load Calc</div>
+          <div class="loadcalc-row">
+            <input type="url" id="loadCalcUrl" placeholder="Paste link to load calc (Google Sheet, PDF, Drive…)" autocomplete="off" />
+            <a class="open-link disabled" id="loadCalcOpen" href="#" target="_blank" rel="noopener">Open</a>
+          </div>
         </div>
       </div>
 
@@ -583,6 +639,7 @@
     <button class="ctrl secondary" onclick="refreshWeather()">Refresh Weather</button>
     <button class="ctrl secondary edit-only" onclick="enterDisplayMode()">Display Mode</button>
     <button class="ctrl secondary" onclick="toggleTvMode()">Larger Text</button>
+    <button class="ctrl secondary" onclick="printBoard()">Print / PDF</button>
     <button class="ctrl ghost edit-only" onclick="toggleIncidentHistory()">Incident Log</button>
     <button class="ctrl ghost edit-only" onclick="toggleAuditLog()">Audit Trail</button>
     <button class="ctrl danger edit-only" onclick="clearBoard()">Clear Board</button>
@@ -839,6 +896,11 @@
       document.getElementById("fh5").value = shifted[4];
       document.getElementById("fh6").value = shifted[5];
       document.getElementById("notesField").value = data.notes || "";
+      const lcu = document.getElementById("loadCalcUrl");
+      if (lcu) {
+        lcu.value = data.load_calc_url || "";
+        updateLoadCalcLink();
+      }
       if (data.duty_mode) {
         const dm = document.getElementById("dutyMode");
         if (dm) dm.value = data.duty_mode;
@@ -886,6 +948,7 @@
         fh5: document.getElementById("fh5").value,
         fh6: document.getElementById("fh6").value,
         notes: document.getElementById("notesField").value,
+        load_calc_url: (document.getElementById("loadCalcUrl") || {}).value || "",
         selected_manager_id: selectedMgrId || null,
         duty_mode: dm ? dm.value : "day_dual",
         hours_anchor_date: rollingDates()[0],
@@ -924,6 +987,11 @@
         notes.addEventListener("input", scheduleAutoSave);
         notes.addEventListener("change", scheduleAutoSave);
       }
+      const lcu = document.getElementById("loadCalcUrl");
+      if (lcu) {
+        lcu.addEventListener("input", () => { updateLoadCalcLink(); scheduleAutoSave(); });
+        lcu.addEventListener("change", () => { updateLoadCalcLink(); scheduleAutoSave(); });
+      }
       // Ctrl/Cmd+S
       document.addEventListener("keydown", (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
@@ -940,6 +1008,8 @@
         if (el) el.value = "";
       });
       document.getElementById("notesField").value = "";
+      const lcu = document.getElementById("loadCalcUrl");
+      if (lcu) { lcu.value = ""; updateLoadCalcLink(); }
       selectedMgrId = null;
       document.getElementById("mgrSelect").value = "";
       onMgrSelect();
@@ -1432,6 +1502,7 @@
         fh5: document.getElementById("fh5").value,
         fh6: document.getElementById("fh6").value,
         notes: document.getElementById("notesField").value,
+        load_calc_url: (document.getElementById("loadCalcUrl") || {}).value || "",
         duty_mode: dm ? dm.value : "day_dual",
         manager_id: selectedMgrId || null
       };
@@ -1564,9 +1635,38 @@
     window.doLogin = doLogin;
     window.doLogout = doLogout;
     window.updateDutyRule = updateDutyRule;
+
+    function updateLoadCalcLink() {
+      const input = document.getElementById("loadCalcUrl");
+      const a = document.getElementById("loadCalcOpen");
+      if (!input || !a) return;
+      const url = (input.value || "").trim();
+      if (url && /^https?:\/\//i.test(url)) {
+        a.href = url;
+        a.classList.remove("disabled");
+      } else {
+        a.href = "#";
+        a.classList.add("disabled");
+      }
+    }
+
+    function printBoard() {
+      // Temporarily use display-style clean print
+      const wasDisplay = document.body.classList.contains("display-mode");
+      document.body.classList.add("display-mode");
+      setTimeout(() => {
+        window.print();
+        if (!wasDisplay && !isDisplayOnly) {
+          document.body.classList.remove("display-mode");
+        }
+      }, 100);
+    }
+
     window.scheduleAutoSave = scheduleAutoSave;
     window.toggleIncidentHistory = toggleIncidentHistory;
     window.toggleAuditLog = toggleAuditLog;
+    window.printBoard = printBoard;
+    window.updateLoadCalcLink = updateLoadCalcLink;
 
     document.getElementById("passInput") && document.getElementById("passInput").addEventListener("keydown", e => {
       if (e.key === "Enter") doLogin();
