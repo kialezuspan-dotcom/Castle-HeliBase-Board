@@ -434,20 +434,44 @@
       }
     }
 
+
+    .loadcalc-drop {
+      border: 2px dashed #666; border-radius: 6px; padding: 14px 12px;
+      text-align: center; background: #f3f2ec; cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      font-size: 0.82rem; color: #444; font-weight: 600;
+    }
+    .loadcalc-drop.dragover {
+      border-color: #1e4d8c; background: #e8eef6; color: #1e4d8c;
+    }
+    .loadcalc-drop .hint { font-weight: 500; font-size: 0.75rem; color: #777; margin-top: 4px; }
+    .loadcalc-status { font-size: 0.72rem; color: #555; min-height: 1.1em; }
+    .base-badge {
+      display: inline-block; background: rgba(255,255,255,0.2); color: #fff;
+      font-size: 0.65rem; font-weight: 800; letter-spacing: 0.08em;
+      padding: 2px 8px; border-radius: 3px; margin-left: 6px;
+    }
+    body.display-mode .loadcalc-drop { pointer-events: none; }
+
   </style>
 </head>
 <body>
 
   <!-- LOGIN (editors only) -->
   <div id="loginScreen">
-    <h2>CASTLE HELIBASE BOARD</h2>
-    <p>Sign in to edit the live status board. Use the display link on the TV — no login needed.</p>
+    <h2>HELIBASE STATUS BOARD</h2>
+    <p>Choose your base, then sign in to edit. TVs use the display link — no login needed.</p>
+    <select id="baseSelect" style="padding:12px 16px;font-size:1rem;border-radius:6px;border:2px solid #415a77;background:#0d1b2a;color:#fff;width:min(280px,90vw);">
+      <option value="castle">Castle Helibase</option>
+      <option value="mariposa">Mariposa Helibase</option>
+    </select>
     <input type="email" id="emailInput" placeholder="Email" autocomplete="username" />
     <input type="password" id="passInput" placeholder="Password" autocomplete="current-password" />
     <button type="button" onclick="doLogin()">Sign In</button>
     <div class="err" id="loginErr"></div>
-    <p class="hint">Accounts are created in Supabase → Authentication → Users</p>
-    <a class="view-display-link" href="?view=display">Open Display Mode (TV) →</a>
+    <p class="hint">TV links: ?base=castle&amp;view=display or ?base=mariposa&amp;view=display</p>
+    <a class="view-display-link" href="?base=castle&view=display">Open Castle Display →</a>
+    <a class="view-display-link" href="?base=mariposa&view=display">Open Mariposa Display →</a>
   </div>
 
   <div class="app-wrap" id="appWrap">
@@ -496,16 +520,22 @@
 
         <div class="loadcalc-block">
           <div class="section-title">Load Calc</div>
-          <div class="loadcalc-row">
-            <input type="url" id="loadCalcUrl" placeholder="Paste link to load calc (Google Sheet, PDF, Drive…)" autocomplete="off" />
+          <div class="loadcalc-drop" id="loadCalcDrop" tabindex="0">
+            Drop PDF here or click to upload
+            <div class="hint">PDF only · max ~20 MB</div>
+          </div>
+          <input type="file" id="loadCalcFile" accept="application/pdf,.pdf" hidden />
+          <div class="loadcalc-row" style="margin-top:6px;">
+            <input type="url" id="loadCalcUrl" placeholder="Or paste a link…" autocomplete="off" />
             <a class="open-link disabled" id="loadCalcOpen" href="#" target="_blank" rel="noopener">Open</a>
           </div>
+          <div class="loadcalc-status" id="loadCalcStatus"></div>
         </div>
       </div>
 
       <!-- RIGHT: blue-tape status board -->
       <div class="right-panel">
-        <div class="board-title">Status Board · Live</div>
+        <div class="board-title">Status Board · Live <span class="base-badge" id="baseBadge">CASTLE</span></div>
 
         <div class="section row-3">
           <div class="cell">
@@ -542,7 +572,7 @@
             <div class="paper temp-paper">
               <div class="temp-pair">
                 <div class="temp-block" id="tempKmerBlock">
-                  <div class="temp-elev">~190′ KMER</div>
+                  <div class="temp-elev" id="elevAirport">~190′ KMER</div>
                   <div class="temp-value" id="tempKmer">--</div>
                   <div class="temp-source" id="srcKmer">—</div>
                 </div>
@@ -704,6 +734,11 @@
       "fh1","fh2","fh3","fh4","fh5","fh6"
     ];
 
+    const BASES = {
+      castle: { id: "castle", label: "Castle Helibase", short: "CASTLE" },
+      mariposa: { id: "mariposa", label: "Mariposa Helibase", short: "MARIPOSA" }
+    };
+    let currentBaseId = "castle";
     let managers = [];
     let selectedMgrId = null;
     let saveTimer = null;
@@ -780,6 +815,33 @@
       saveTimer = setTimeout(() => { saveBoard(); }, 30000);
     }
 
+
+    function setBaseUI() {
+      const b = BASES[currentBaseId] || BASES.castle;
+      const badge = document.getElementById("baseBadge");
+      if (badge) badge.textContent = b.short;
+      document.title = b.label + " Status Board";
+      const h2 = document.querySelector("#loginScreen h2");
+      if (h2 && !isDisplayOnly) h2.textContent = b.label.toUpperCase() + " BOARD";
+      try { refreshAirportLabel(); } catch (e) {}
+    }
+
+    async function resolveBaseForUser(user) {
+      // 1) user_bases table by email
+      try {
+        const email = (user.email || "").toLowerCase();
+        if (email) {
+          const { data } = await sb.from("user_bases").select("base_id").eq("email", email).maybeSingle();
+          if (data && data.base_id && BASES[data.base_id]) return data.base_id;
+        }
+      } catch (e) { console.warn("user_bases", e); }
+      // 2) user metadata
+      const meta = (user.user_metadata || {}).base_id;
+      if (meta && BASES[meta]) return meta;
+      // 3) default castle
+      return "castle";
+    }
+
     async function doLogin() {
       const email = document.getElementById("emailInput").value.trim();
       const password = document.getElementById("passInput").value;
@@ -795,12 +857,18 @@
         return;
       }
       currentUser = data.user;
+      const sel = document.getElementById("baseSelect");
+      const chosen = sel && BASES[sel.value] ? sel.value : "castle";
+      currentBaseId = chosen;
+      try { sessionStorage.setItem("helibase_base", currentBaseId); } catch (e) {}
+      setBaseUI();
       document.getElementById("loginScreen").classList.remove("show");
       await bootEditor();
     }
 
     async function doLogout() {
       await sb.auth.signOut();
+      try { sessionStorage.removeItem("helibase_base"); } catch (e) {}
       location.href = location.pathname;
     }
 
@@ -824,6 +892,7 @@
       try { refreshHourLabels(); } catch (e) {}
       try {
         setupBoardListeners();
+        setupLoadCalcDrop();
         attachTimeFormatter("timeUp");
         attachTimeFormatter("timeDown");
         attachTimeFormatter("cutoff");
@@ -843,8 +912,11 @@
     async function initAuthGate() {
       const params = new URLSearchParams(location.search);
       const forceDisplay = params.get("view") === "display";
+      const urlBase = (params.get("base") || "").toLowerCase();
 
       if (forceDisplay) {
+        currentBaseId = (urlBase && BASES[urlBase]) ? urlBase : "castle";
+        setBaseUI();
         await bootDisplay();
         return;
       }
@@ -852,6 +924,12 @@
       const { data: { session } } = await sb.auth.getSession();
       if (session && session.user) {
         currentUser = session.user;
+        let stored = null;
+        try { stored = sessionStorage.getItem("helibase_base"); } catch (e) {}
+        currentBaseId = (stored && BASES[stored]) ? stored : "castle";
+        const sel = document.getElementById("baseSelect");
+        if (sel) sel.value = currentBaseId;
+        setBaseUI();
         await bootEditor();
       } else {
         document.getElementById("loginScreen").classList.add("show");
@@ -863,15 +941,19 @@
     }
 
     async function loadManagers() {
-      const { data, error } = await sb.from("managers").select("*").order("name");
+      let q = sb.from("managers").select("*").order("name");
+      // Prefer base-specific managers; fall back to all if column missing
+      const { data, error } = await q;
       if (error) { console.error(error); return; }
-      managers = data || [];
+      const all = data || [];
+      const filtered = all.filter(m => !m.base_id || m.base_id === currentBaseId);
+      managers = filtered.length ? filtered : all;
       refreshMgrDropdown();
       if (selectedMgrId) onMgrSelect();
     }
 
     async function loadBoard() {
-      const { data, error } = await sb.from("board_state").select("*").eq("id", 1).maybeSingle();
+      const { data, error } = await sb.from("board_state").select("*").eq("base_id", currentBaseId).maybeSingle();
       if (error) { console.error(error); return; }
       if (!data) return;
       applyingRemote = true;
@@ -928,7 +1010,7 @@
       clearTimeout(saveTimer);
       const dm = document.getElementById("dutyMode");
       const payload = {
-        id: 1,
+        base_id: currentBaseId,
         aab1: document.getElementById("aab1").value,
         aab2: document.getElementById("aab2").value,
         aab3: document.getElementById("aab3").value,
@@ -954,7 +1036,7 @@
         hours_anchor_date: rollingDates()[0],
         updated_at: new Date().toISOString()
       };
-      const { error } = await sb.from("board_state").upsert(payload);
+      const { error } = await sb.from("board_state").upsert(payload, { onConflict: "base_id" });
       if (error) {
         console.error(error);
         flashStatus("Save failed: " + (error.message || "check login / SQL"));
@@ -1021,6 +1103,7 @@
       sb.channel("board-live")
         .on("postgres_changes", { event: "*", schema: "public", table: "board_state" }, payload => {
           if (payload.new) {
+            if (payload.new.base_id && payload.new.base_id !== currentBaseId) return;
             applyingRemote = true;
             const d = payload.new;
             document.getElementById("aab1").value = d.aab1 || "";
@@ -1283,13 +1366,26 @@
     }
 
 
-    // Weather — NWS daily forecast HIGH (matches HIGH TEMP on board)
-    // KMER Castle AFB grid HNX/30,133 ; Fish Camp grid HNX/63,131
+    // Weather — NWS daily HIGH; airport depends on base (Castle=KMER, Mariposa=KMPI)
     const NWS_UA = { "Accept": "application/geo+json" };
-    const KMER_DAILY = "https://api.weather.gov/gridpoints/HNX/30,133/forecast";
     const FISH_DAILY = "https://api.weather.gov/gridpoints/HNX/63,131/forecast";
-    const KMER_HOURLY = "https://api.weather.gov/gridpoints/HNX/30,133/forecast/hourly";
     const FISH_HOURLY = "https://api.weather.gov/gridpoints/HNX/63,131/forecast/hourly";
+    const WX_SITES = {
+      castle: {
+        icao: "KMER",
+        elevLabel: "~190′ KMER",
+        daily: "https://api.weather.gov/gridpoints/HNX/30,133/forecast",
+        hourly: "https://api.weather.gov/gridpoints/HNX/30,133/forecast/hourly",
+        lat: 37.3805, lon: -120.5682
+      },
+      mariposa: {
+        icao: "KMPI",
+        elevLabel: "~2,250′ KMPI",
+        daily: "https://api.weather.gov/gridpoints/HNX/49,134/forecast",
+        hourly: "https://api.weather.gov/gridpoints/HNX/49,134/forecast/hourly",
+        lat: 37.5109, lon: -120.0400
+      }
+    };
     let prevKmerC = null, prevFishC = null;
     let highKmerC = null, highFishC = null;
     let currentKmerC = null, currentFishC = null;
@@ -1349,10 +1445,23 @@
       return { c: null, source: "unavailable" };
     }
 
+    function airportSite() {
+      return WX_SITES[currentBaseId] || WX_SITES.castle;
+    }
+
+    function refreshAirportLabel() {
+      const el = document.getElementById("elevAirport");
+      const site = airportSite();
+      if (el) el.textContent = site.elevLabel;
+    }
+
     async function fetchKmerTempC() {
-      return fetchTempHigh(KMER_DAILY, KMER_HOURLY, 37.3805, -120.5682);
+      // "Airport" high for current base (KMER or KMPI)
+      const site = airportSite();
+      return fetchTempHigh(site.daily, site.hourly, site.lat, site.lon);
     }
     async function fetchFishTempC() {
+      // Fish Camp same for both bases
       return fetchTempHigh(FISH_DAILY, FISH_HOURLY, 37.47675, -119.63828);
     }
 
@@ -1512,6 +1621,7 @@
       if (!currentUser) return;
       try {
         await sb.from("audit_log").insert({
+          base_id: currentBaseId,
           action: action,
           detail: detail || "",
           user_email: currentUser.email || currentUser.id || "unknown"
@@ -1526,6 +1636,7 @@
       if (prev && next && prev !== next) {
         try {
           await sb.from("incident_log").insert({
+            base_id: currentBaseId,
             incident: prev,
             snapshot: snapshotFromForm(),
             created_by: currentUser ? (currentUser.email || currentUser.id) : null
@@ -1560,7 +1671,8 @@
       if (!body) return;
       body.innerHTML = '<div class="history-empty">Loading…</div>';
       const { data, error } = await sb.from("incident_log")
-        .select("id, incident, snapshot, created_at, created_by")
+        .select("id, incident, snapshot, created_at, created_by, base_id")
+        .eq("base_id", currentBaseId)
         .order("created_at", { ascending: false })
         .limit(40);
       if (error) {
@@ -1595,7 +1707,8 @@
       if (!body) return;
       body.innerHTML = '<div class="history-empty">Loading…</div>';
       const { data, error } = await sb.from("audit_log")
-        .select("id, action, detail, user_email, created_at")
+        .select("id, action, detail, user_email, created_at, base_id")
+        .eq("base_id", currentBaseId)
         .order("created_at", { ascending: false })
         .limit(50);
       if (error) {
@@ -1635,6 +1748,80 @@
     window.doLogin = doLogin;
     window.doLogout = doLogout;
     window.updateDutyRule = updateDutyRule;
+
+
+    function setupLoadCalcDrop() {
+      const drop = document.getElementById("loadCalcDrop");
+      const fileInput = document.getElementById("loadCalcFile");
+      if (!drop || !fileInput) return;
+
+      drop.addEventListener("click", () => {
+        if (isDisplayOnly || !currentUser) return;
+        fileInput.click();
+      });
+      fileInput.addEventListener("change", () => {
+        if (fileInput.files && fileInput.files[0]) uploadLoadCalcPdf(fileInput.files[0]);
+        fileInput.value = "";
+      });
+      ["dragenter", "dragover"].forEach(ev => {
+        drop.addEventListener(ev, e => {
+          e.preventDefault(); e.stopPropagation();
+          drop.classList.add("dragover");
+        });
+      });
+      ["dragleave", "drop"].forEach(ev => {
+        drop.addEventListener(ev, e => {
+          e.preventDefault(); e.stopPropagation();
+          drop.classList.remove("dragover");
+        });
+      });
+      drop.addEventListener("drop", e => {
+        if (isDisplayOnly || !currentUser) return;
+        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) uploadLoadCalcPdf(f);
+      });
+    }
+
+    async function uploadLoadCalcPdf(file) {
+      const status = document.getElementById("loadCalcStatus");
+      if (!currentUser) {
+        if (status) status.textContent = "Sign in to upload.";
+        return;
+      }
+      if (!file || file.type !== "application/pdf") {
+        if (status) status.textContent = "Please drop a PDF file.";
+        return;
+      }
+      if (file.size > 20 * 1024 * 1024) {
+        if (status) status.textContent = "File too large (max 20 MB).";
+        return;
+      }
+      if (status) status.textContent = "Uploading…";
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const path = currentBaseId + "/" + Date.now() + "_" + safeName;
+      const { error: upErr } = await sb.storage.from("load-calcs").upload(path, file, {
+        contentType: "application/pdf",
+        upsert: true
+      });
+      if (upErr) {
+        console.error(upErr);
+        if (status) status.textContent = "Upload failed: " + (upErr.message || "create storage bucket load-calcs");
+        return;
+      }
+      const { data: pub } = sb.storage.from("load-calcs").getPublicUrl(path);
+      const url = pub && pub.publicUrl;
+      if (!url) {
+        if (status) status.textContent = "Uploaded but no public URL — check bucket settings.";
+        return;
+      }
+      const input = document.getElementById("loadCalcUrl");
+      if (input) input.value = url;
+      updateLoadCalcLink();
+      if (status) status.textContent = "PDF uploaded · saving…";
+      await saveBoard();
+      if (status) status.textContent = "PDF ready — use Open";
+      await writeAudit("load_calc_upload", safeName);
+    }
 
     function updateLoadCalcLink() {
       const input = document.getElementById("loadCalcUrl");
