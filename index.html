@@ -550,6 +550,37 @@
       min-height: 40px;
     }
 
+
+    .loadcalc-preview {
+      position: relative;
+    }
+    .loadcalc-preview-close {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      z-index: 5;
+      width: 28px;
+      height: 28px;
+      border: none;
+      border-radius: 4px;
+      background: rgba(30, 30, 30, 0.75);
+      color: #fff;
+      font-size: 1.1rem;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+    .loadcalc-preview.show .loadcalc-preview-close {
+      display: flex;
+    }
+    body.display-mode .loadcalc-preview-close {
+      display: none !important; /* display is read-only */
+    }
+
   </style>
 </head>
 <body>
@@ -634,6 +665,8 @@
           <div class="loadcalc-status" id="loadCalcStatus"></div>
           <div class="loadcalc-meta" id="loadCalcMeta"></div>
           <div class="loadcalc-preview" id="loadCalcPreview">
+            <button type="button" class="loadcalc-preview-close edit-only" id="loadCalcCloseBtn"
+              title="Remove load calc" onclick="clearLoadCalc()" aria-label="Close load calc">×</button>
             <iframe id="loadCalcFrame" title="Load Calc PDF"></iframe>
           </div>
         </div>
@@ -1124,6 +1157,17 @@
       // No timestamp but has URL from a previous schema — clear only if hours_anchor
       // suggests an old board day (optional safety); prefer keeping if unknown
       return false;
+    }
+
+
+    function clearLoadCalc() {
+      if (isDisplayOnly) return;
+      clearLoadCalcLocal();
+      dirty = true;
+      scheduleAutoSave();
+      const st = document.getElementById("loadCalcStatus");
+      if (st) st.textContent = "Load calc removed — save to sync";
+      flashStatus("Load calc cleared");
     }
 
     function clearLoadCalcLocal() {
@@ -2235,6 +2279,7 @@
     window.printBoard = printBoard;
     window.toggleKioskFullscreen = toggleKioskFullscreen;
     window.updateLoadCalcLink = updateLoadCalcLink;
+    window.clearLoadCalc = clearLoadCalc;
     window.resolveConflictReload = resolveConflictReload;
     window.resolveConflictOverwrite = resolveConflictOverwrite;
 
