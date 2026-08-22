@@ -202,6 +202,54 @@
     }
     .mgr-list-item button { font-size: 0.7rem; padding: 3px 8px; }
 
+
+    /* LOGIN */
+    #loginScreen {
+      position: fixed; inset: 0; z-index: 10000;
+      background: #1a2332;
+      display: none; align-items: center; justify-content: center;
+      flex-direction: column; gap: 14px; color: #e0e0e0;
+    }
+    #loginScreen.show { display: flex; }
+    #loginScreen h2 { font-size: 1.35rem; letter-spacing: 0.06em; }
+    #loginScreen p { font-size: 0.85rem; opacity: 0.75; max-width: 340px; text-align: center; }
+    #loginScreen input {
+      padding: 12px 16px; font-size: 1rem; border-radius: 6px;
+      border: 2px solid #415a77; background: #0d1b2a; color: #fff;
+      width: min(280px, 90vw); outline: none;
+    }
+    #loginScreen input:focus { border-color: #778da9; }
+    #loginScreen button {
+      padding: 11px 32px; font-size: 1rem; font-weight: 600;
+      background: #1e4d8c; color: #fff; border: none; border-radius: 6px; cursor: pointer;
+    }
+    #loginScreen .err { color: #ff6b6b; font-size: 0.85rem; min-height: 1.2em; }
+    #loginScreen .hint { font-size: 0.7rem; opacity: 0.5; margin-top: 6px; }
+    #loginScreen .view-display-link {
+      margin-top: 8px; color: #9fb4d0; font-size: 0.8rem; text-decoration: underline; cursor: pointer;
+    }
+
+    .duty-mode-row {
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px;
+    }
+    .duty-mode-row select {
+      flex: 1; min-width: 180px; padding: 6px 8px; font-size: 0.8rem; font-weight: 700;
+      border: 2px solid rgba(255,255,255,0.35); border-radius: 3px;
+      background: rgba(0,0,0,0.25); color: #fff;
+    }
+    .duty-mode-row select option { color: #111; }
+    body.display-mode .duty-mode-row select {
+      pointer-events: none; border: none; background: transparent;
+      appearance: none; -webkit-appearance: none;
+    }
+    .autosave-hint { font-size: 0.7rem; color: #555; text-align: center; margin-top: 4px; }
+    body.display-mode .autosave-hint { display: none; }
+    body.viewer-mode .edit-only { display: none !important; }
+    body.viewer-mode input, body.viewer-mode select, body.viewer-mode textarea {
+      pointer-events: none !important; border-color: transparent !important;
+    }
+    body.viewer-mode .btn-small.edit-only { display: none !important; }
+
     /* Scale to screen */
     html { font-size: clamp(13px, 1.15vw + 0.3rem, 20px); }
     body { min-height: 100dvh; }
@@ -295,6 +343,19 @@
   </style>
 </head>
 <body>
+
+  <!-- LOGIN (editors only) -->
+  <div id="loginScreen">
+    <h2>CASTLE HELIBASE BOARD</h2>
+    <p>Sign in to edit the live status board. Use the display link on the TV — no login needed.</p>
+    <input type="email" id="emailInput" placeholder="Email" autocomplete="username" />
+    <input type="password" id="passInput" placeholder="Password" autocomplete="current-password" />
+    <button type="button" onclick="doLogin()">Sign In</button>
+    <div class="err" id="loginErr"></div>
+    <p class="hint">Accounts are created in Supabase → Authentication → Users</p>
+    <a class="view-display-link" href="?view=display">Open Display Mode (TV) →</a>
+  </div>
+
   <div class="app-wrap" id="appWrap">
     <div class="outer-frame">
 
@@ -424,49 +485,61 @@
 
         <div class="hours-row">
           <div class="hours-label-row">
-            <div class="hours-label">Flight Hours (6-Day)</div>
+            <div class="hours-label">Flight Hours (Rolling 6-Day)</div>
             <span class="arrow">→</span>
             <div class="hours-total" id="hoursTotal">Total: 0.0</div>
           </div>
+          <div class="duty-mode-row edit-only">
+            <select id="dutyMode" onchange="updateDutyRule(); scheduleAutoSave();">
+              <option value="day_single">Day Only · Single Pilot</option>
+              <option value="day_dual" selected>Day Only · Dual Pilot</option>
+              <option value="night_single">Night Only · Single Pilot</option>
+              <option value="night_dual">Night Only · Dual Pilot</option>
+              <option value="cum_single">Cumulative Day+Night · Single</option>
+              <option value="cum_dual">Cumulative Day+Night · Dual</option>
+            </select>
+          </div>
           <div class="hours-slots">
             <div class="hours-day-cell">
-              <div class="hours-day-label">Day 1</div>
+              <div class="hours-day-label" id="fhLabel1">—</div>
               <div class="paper"><input type="number" id="fh1" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
             </div>
             <div class="hours-day-cell">
-              <div class="hours-day-label">Day 2</div>
+              <div class="hours-day-label" id="fhLabel2">—</div>
               <div class="paper"><input type="number" id="fh2" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
             </div>
             <div class="hours-day-cell">
-              <div class="hours-day-label">Day 3</div>
+              <div class="hours-day-label" id="fhLabel3">—</div>
               <div class="paper"><input type="number" id="fh3" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
             </div>
             <div class="hours-day-cell">
-              <div class="hours-day-label">Day 4</div>
+              <div class="hours-day-label" id="fhLabel4">—</div>
               <div class="paper"><input type="number" id="fh4" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
             </div>
             <div class="hours-day-cell">
-              <div class="hours-day-label">Day 5</div>
+              <div class="hours-day-label" id="fhLabel5">—</div>
               <div class="paper"><input type="number" id="fh5" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
             </div>
             <div class="hours-day-cell">
-              <div class="hours-day-label">Day 6</div>
+              <div class="hours-day-label" id="fhLabel6">—</div>
               <div class="paper"><input type="number" id="fh6" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
             </div>
           </div>
-          <div class="duty-rule" id="dutyRule">Day Only (Dual Pilot): enter hours Day 1 → Day 6</div>
+          <div class="duty-rule" id="dutyRule">Select duty mode · hours roll left → right (oldest → today)</div>
         </div>
       </div>
     </div>
   </div>
 
   <div class="controls" id="controls">
-    <button class="ctrl success" onclick="saveBoard()">Save Board</button>
+    <button class="ctrl success edit-only" onclick="saveBoard()">Save Board</button>
     <button class="ctrl secondary" onclick="refreshWeather()">Refresh Weather</button>
-    <button class="ctrl secondary" onclick="enterDisplayMode()">Display Mode</button>
-    <button class="ctrl secondary edit-only" onclick="toggleTvMode()">Larger Text</button>
+    <button class="ctrl secondary edit-only" onclick="enterDisplayMode()">Display Mode</button>
+    <button class="ctrl secondary" onclick="toggleTvMode()">Larger Text</button>
     <button class="ctrl danger edit-only" onclick="clearBoard()">Clear Board</button>
+    <button class="ctrl secondary edit-only" onclick="doLogout()">Sign Out</button>
   </div>
+  <p class="autosave-hint edit-only" id="autosaveHint">Auto-saves 30s after you stop typing · Ctrl/Cmd+S to save now</p>
   <button type="button" id="exitDisplayBtn" onclick="exitDisplayMode()">Exit Display Mode</button>
 
   <div class="status-bar" id="statusBar">
@@ -510,10 +583,125 @@
     let selectedMgrId = null;
     let saveTimer = null;
     let applyingRemote = false;
+    let currentUser = null;
+    let isDisplayOnly = false;
+    let dirty = false;
+
+    // 6-day duty thresholds: [oneDayOff, twoDaysOff]
+    const DUTY_RULES = {
+      day_single:   { label: "Day Only (Single Pilot)", one: 36.0, two: 42.0 },
+      day_dual:     { label: "Day Only (Dual Pilot)", one: 41.1, two: 48.0 },
+      night_single: { label: "Night Only (Single Pilot)", one: 25.7, two: 30.0 },
+      night_dual:   { label: "Night Only (Dual Pilot)", one: 30.8, two: 36.0 },
+      cum_single:   { label: "Cumulative Day+Night (Single)", one: 36.0, two: 48.0 },
+      cum_dual:     { label: "Cumulative Day+Night (Dual)", one: 41.1, two: 48.0 }
+    };
+
+    function todayISO() {
+      const d = new Date();
+      return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+    }
+
+    function addDaysISO(iso, n) {
+      const d = new Date(iso + "T12:00:00");
+      d.setDate(d.getDate() + n);
+      return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+    }
+
+    function formatDayLabel(iso) {
+      const d = new Date(iso + "T12:00:00");
+      const md = (d.getMonth()+1) + "/" + d.getDate();
+      const wd = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()];
+      return wd + " " + md;
+    }
+
+    /** Rolling window: fh1 = today-5 … fh6 = today */
+    function rollingDates() {
+      const t = todayISO();
+      return [0,1,2,3,4,5].map(i => addDaysISO(t, i - 5));
+    }
+
+    function refreshHourLabels() {
+      const dates = rollingDates();
+      for (let i = 0; i < 6; i++) {
+        const el = document.getElementById("fhLabel" + (i+1));
+        if (el) el.textContent = formatDayLabel(dates[i]);
+      }
+    }
+
+    /**
+     * If stored hours_anchor_date is older than (today-5), shift hour values
+     * so they stay aligned to calendar days.
+     */
+    function shiftHoursToRollingWindow(data) {
+      const dates = rollingDates(); // [t-5 .. t]
+      const anchor = data.hours_anchor_date || dates[0];
+      const vals = [data.fh1, data.fh2, data.fh3, data.fh4, data.fh5, data.fh6].map(v => v || "");
+      // map each old slot date = anchor + i
+      const map = {};
+      for (let i = 0; i < 6; i++) {
+        map[addDaysISO(anchor, i)] = vals[i];
+      }
+      return dates.map(iso => map[iso] || "");
+    }
+
+    function scheduleAutoSave() {
+      if (applyingRemote || isDisplayOnly || !currentUser) return;
+      dirty = true;
+      const hint = document.getElementById("autosaveHint");
+      if (hint) hint.textContent = "Unsaved changes · auto-save in 30s…";
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => { saveBoard(); }, 30000);
+    }
+
+    async function doLogin() {
+      const email = document.getElementById("emailInput").value.trim();
+      const password = document.getElementById("passInput").value;
+      const err = document.getElementById("loginErr");
+      if (err) err.textContent = "";
+      if (!email || !password) {
+        if (err) err.textContent = "Enter email and password.";
+        return;
+      }
+      const { data, error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) {
+        if (err) err.textContent = error.message;
+        return;
+      }
+      currentUser = data.user;
+      document.getElementById("loginScreen").classList.remove("show");
+      await bootEditor();
+    }
+
+    async function doLogout() {
+      await sb.auth.signOut();
+      location.href = location.pathname;
+    }
+
+    async function bootEditor() {
+      document.body.classList.remove("viewer-mode", "display-mode");
+      isDisplayOnly = false;
+      await startApp();
+    }
+
+    async function bootDisplay() {
+      isDisplayOnly = true;
+      document.body.classList.add("viewer-mode", "display-mode");
+      document.getElementById("loginScreen").classList.remove("show");
+      const exitBtn = document.getElementById("exitDisplayBtn");
+      if (exitBtn) exitBtn.style.display = "none"; // pure TV mode — no exit chrome
+      await startApp();
+    }
 
     async function startApp() {
       try { setToday(); } catch (e) { console.error("setToday", e); }
-      try { setupBoardListeners(); attachTimeFormatter("timeUp"); attachTimeFormatter("timeDown"); attachTimeFormatter("cutoff"); } catch (e) { console.error("listeners", e); }
+      try { refreshHourLabels(); } catch (e) {}
+      try {
+        setupBoardListeners();
+        attachTimeFormatter("timeUp");
+        attachTimeFormatter("timeDown");
+        attachTimeFormatter("cutoff");
+      } catch (e) { console.error("listeners", e); }
       try { updateDutyRule(); } catch (e) { console.error("duty", e); }
       try { await loadAll(); } catch (e) { console.error("loadAll", e); }
       try { subscribeRealtime(); } catch (e) { console.error("realtime", e); }
@@ -523,6 +711,24 @@
       } catch (e) { console.error("weather", e); }
       const ss = document.getElementById("syncStatus");
       if (ss) { ss.textContent = "Live sync on"; ss.className = "live"; }
+    }
+
+    async function initAuthGate() {
+      const params = new URLSearchParams(location.search);
+      const forceDisplay = params.get("view") === "display";
+
+      if (forceDisplay) {
+        await bootDisplay();
+        return;
+      }
+
+      const { data: { session } } = await sb.auth.getSession();
+      if (session && session.user) {
+        currentUser = session.user;
+        await bootEditor();
+      } else {
+        document.getElementById("loginScreen").classList.add("show");
+      }
     }
 
     async function loadAll() {
@@ -554,16 +760,22 @@
       document.getElementById("sic").value = data.sic || "";
       document.getElementById("mech").value = data.mech || "";
       document.getElementById("fuelDriver").value = data.fuel_driver || "";
-      document.getElementById("fh1").value = data.fh1 || "";
-      document.getElementById("fh2").value = data.fh2 || "";
-      document.getElementById("fh3").value = data.fh3 || "";
-      document.getElementById("fh4").value = data.fh4 || "";
-      document.getElementById("fh5").value = data.fh5 || "";
-      document.getElementById("fh6").value = data.fh6 || "";
+      const shifted = shiftHoursToRollingWindow(data);
+      document.getElementById("fh1").value = shifted[0];
+      document.getElementById("fh2").value = shifted[1];
+      document.getElementById("fh3").value = shifted[2];
+      document.getElementById("fh4").value = shifted[3];
+      document.getElementById("fh5").value = shifted[4];
+      document.getElementById("fh6").value = shifted[5];
       document.getElementById("notesField").value = data.notes || "";
+      if (data.duty_mode) {
+        const dm = document.getElementById("dutyMode");
+        if (dm) dm.value = data.duty_mode;
+      }
       selectedMgrId = data.selected_manager_id || null;
       document.getElementById("mgrSelect").value = selectedMgrId || "";
       onMgrSelect();
+      refreshHourLabels();
       updateDutyRule();
       applyingRemote = false;
     }
@@ -575,7 +787,13 @@
     }
 
     async function saveBoard() {
-      if (applyingRemote) return;
+      if (applyingRemote || isDisplayOnly) return;
+      if (!currentUser) {
+        flashStatus("Sign in to save");
+        return;
+      }
+      clearTimeout(saveTimer);
+      const dm = document.getElementById("dutyMode");
       const payload = {
         id: 1,
         aab1: document.getElementById("aab1").value,
@@ -598,24 +816,45 @@
         fh6: document.getElementById("fh6").value,
         notes: document.getElementById("notesField").value,
         selected_manager_id: selectedMgrId || null,
+        duty_mode: dm ? dm.value : "day_dual",
+        hours_anchor_date: rollingDates()[0],
         updated_at: new Date().toISOString()
       };
       const { error } = await sb.from("board_state").upsert(payload);
       if (error) {
         console.error(error);
-        flashStatus("Save failed – run SQL for aab columns?");
+        flashStatus("Save failed: " + (error.message || "check login / SQL"));
       } else {
+        dirty = false;
         flashStatus("Saved · synced");
+        const hint = document.getElementById("autosaveHint");
+        if (hint) hint.textContent = "Saved · auto-saves 30s after you stop typing · Ctrl/Cmd+S";
       }
     }
 
     function setupBoardListeners() {
-      // Manual save only — bottom "Save Board" button
       BOARD_FIELDS.forEach(id => {
         const el = document.getElementById(id);
-        if (el && id.startsWith("fh")) {
-          el.addEventListener("input", updateDutyRule);
-          el.addEventListener("change", updateDutyRule);
+        if (!el) return;
+        el.addEventListener("input", () => {
+          if (id.startsWith("fh")) updateDutyRule();
+          scheduleAutoSave();
+        });
+        el.addEventListener("change", () => {
+          if (id.startsWith("fh")) updateDutyRule();
+          scheduleAutoSave();
+        });
+      });
+      const notes = document.getElementById("notesField");
+      if (notes) {
+        notes.addEventListener("input", scheduleAutoSave);
+        notes.addEventListener("change", scheduleAutoSave);
+      }
+      // Ctrl/Cmd+S
+      document.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+          e.preventDefault();
+          if (!isDisplayOnly && currentUser) saveBoard();
         }
       });
     }
@@ -690,7 +929,7 @@
       document.getElementById("mgrName").textContent = m ? (m.name || "—") : "—";
       document.getElementById("mgrPhone").textContent = m ? (m.phone || "—") : "—";
       document.getElementById("mgrEmail").textContent = m ? (m.email || "—") : "—";
-      /* manual save only */
+      if (!applyingRemote) scheduleAutoSave();
     }
 
     function openMgrModal() {
@@ -784,7 +1023,9 @@
 
 
     function parseHours(id) {
-      const v = parseFloat(document.getElementById(id).value);
+      const el = document.getElementById(id);
+      if (!el) return 0;
+      const v = parseFloat(el.value);
       return isNaN(v) ? 0 : v;
     }
 
@@ -798,18 +1039,28 @@
       if (!el) return;
       el.classList.remove("warn", "ok");
 
-      // Day Only (Dual Pilot): 41.1 – 48.0 cumulative in consecutive 6-day period → one 24-hour period off
-      if (rounded >= 41.1 && rounded <= 48.0) {
+      const modeEl = document.getElementById("dutyMode");
+      const mode = (modeEl && modeEl.value) || "day_dual";
+      const rule = DUTY_RULES[mode] || DUTY_RULES.day_dual;
+
+      // Daily soft-cap warnings (today = fh6)
+      const todayHrs = parseHours("fh6");
+      const dailyCap = (mode.indexOf("single") >= 0) ? 7.0 : 8.0;
+
+      if (rounded >= rule.two) {
         el.classList.add("warn");
-        el.textContent = "⚠ Day Only (Dual Pilot): " + rounded.toFixed(1) + " hrs in 6 days — requires one (1) 24-hour period OFF";
-      } else if (rounded > 48.0) {
+        el.textContent = "⚠ " + rule.label + ": " + rounded.toFixed(1) + " hrs — requires TWO (2) days OFF (≥" + rule.two.toFixed(1) + ")";
+      } else if (rounded >= rule.one) {
         el.classList.add("warn");
-        el.textContent = "⚠ " + rounded.toFixed(1) + " hrs exceeds 48.0 in 6-day period — review duty limitations";
+        el.textContent = "⚠ " + rule.label + ": " + rounded.toFixed(1) + " hrs — requires one (1) 24-hour period OFF (≥" + rule.one.toFixed(1) + ")";
+      } else if (todayHrs > dailyCap) {
+        el.classList.add("warn");
+        el.textContent = "⚠ Today " + todayHrs.toFixed(1) + " hrs exceeds typical daily cap (" + dailyCap + " hrs " + (mode.indexOf("single")>=0?"single":"dual") + ")";
       } else if (rounded > 0) {
         el.classList.add("ok");
-        el.textContent = "Day Only (Dual Pilot): " + rounded.toFixed(1) + " / 41.0 hrs — under threshold (41.1–48.0 needs 24-hr off)";
+        el.textContent = rule.label + ": " + rounded.toFixed(1) + " / " + rule.one.toFixed(1) + " hrs (1 day off) · " + rule.two.toFixed(1) + " hrs (2 days off)";
       } else {
-        el.textContent = "Day Only (Dual Pilot): enter hours Day 1 → Day 6 (41.1–48.0 cumulative needs one 24-hr off)";
+        el.textContent = rule.label + ": enter hours under dated columns (left=oldest, right=today)";
       }
     }
 
@@ -868,17 +1119,18 @@
     }
 
     function enterDisplayMode() {
-      // save first so display is current
-      try { saveBoard(); } catch (e) {}
+      try { if (currentUser) saveBoard(); } catch (e) {}
       document.body.classList.add("display-mode");
       document.body.classList.remove("tv-mode");
-      // hide empty placeholders look
       document.querySelectorAll("input, textarea").forEach(el => {
         if (!el.value && el.placeholder) el.setAttribute("data-ph", el.placeholder);
         el.placeholder = "";
       });
+      const exitBtn = document.getElementById("exitDisplayBtn");
+      if (exitBtn && currentUser) exitBtn.style.display = "block";
     }
     function exitDisplayMode() {
+      if (isDisplayOnly) return; // pure ?view=display stays locked
       document.body.classList.remove("display-mode");
       document.querySelectorAll("input, textarea").forEach(el => {
         const ph = el.getAttribute("data-ph");
@@ -1041,8 +1293,16 @@
     window.enterDisplayMode = enterDisplayMode;
     window.exitDisplayMode = exitDisplayMode;
     window.onMgrSelect = onMgrSelect;
+    window.doLogin = doLogin;
+    window.doLogout = doLogout;
+    window.updateDutyRule = updateDutyRule;
+    window.scheduleAutoSave = scheduleAutoSave;
 
-    startApp();
+    document.getElementById("passInput") && document.getElementById("passInput").addEventListener("keydown", e => {
+      if (e.key === "Enter") doLogin();
+    });
+
+    initAuthGate();
 
   </script>
 </body>
