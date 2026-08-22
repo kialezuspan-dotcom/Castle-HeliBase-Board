@@ -328,6 +328,26 @@
     body.display-mode #exitDisplayBtn { display: block; }
     body.display-mode #controls { display: none !important; }
 
+    .loadcalc-warn {
+      display: none;
+      margin-top: 8px;
+      padding: 12px 14px;
+      text-align: center;
+      font-weight: 800;
+      font-size: 1.05rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      border-radius: 4px;
+      border: 3px solid #7f0000;
+      background: #c62828;
+      color: #fff;
+    }
+    .loadcalc-warn.show {
+      display: block;
+      animation: blinkRed 1s ease-in-out infinite;
+    }
+
+
     .temp-source.stale { color: #c62828; font-weight: 700; }
     .history-panel {
       width: 100%; max-width: 1280px; margin-top: 12px;
@@ -551,6 +571,7 @@
               <div class="paper"><input type="number" id="fh6" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
             </div>
           </div>
+          <div class="loadcalc-warn" id="loadCalcWarn">⚠ WARNING — Temperature exceeded forecast high by &gt;5°C — REDO LOAD CALC</div>
           <div class="duty-rule" id="dutyRule">Select duty mode · hours roll left → right (oldest → today)</div>
         </div>
       </div>
@@ -754,8 +775,9 @@
       try { await loadAll(); } catch (e) { console.error("loadAll", e); }
       try { subscribeRealtime(); } catch (e) { console.error("realtime", e); }
       try {
-        updateWeather();
-        setInterval(updateWeather, 8 * 60 * 1000);
+        updateWeather(); // highs + first current check
+        setInterval(updateForecastHighs, 30 * 60 * 1000); // refresh forecast high every 30 min
+        setInterval(pollCurrentVsHigh, 5 * 60 * 1000);    // current vs high every 5 min
       } catch (e) { console.error("weather", e); }
       const ss = document.getElementById("syncStatus");
       if (ss) { ss.textContent = "Live sync on"; ss.className = "live"; }
@@ -1199,6 +1221,8 @@
     const KMER_HOURLY = "https://api.weather.gov/gridpoints/HNX/30,133/forecast/hourly";
     const FISH_HOURLY = "https://api.weather.gov/gridpoints/HNX/63,131/forecast/hourly";
     let prevKmerC = null, prevFishC = null;
+    let highKmerC = null, highFishC = null;
+    let currentKmerC = null, currentFishC = null;
 
     function toC(value, unit) {
       if (typeof value !== "number" || isNaN(value)) return null;
@@ -1281,9 +1305,9 @@
       if (prev !== null && cur !== null && Math.abs(cur - prev) > 5) el.classList.add("blink");
     }
 
-    async function updateWeather() {
+    async function updateForecastHighs() {
       const status = document.getElementById("weatherStatus");
-      if (status) { status.textContent = "Updating…"; status.className = ""; }
+      if (status) { status.textContent = "Updating highs…"; status.className = ""; }
       try {
         const results = await Promise.allSettled([
           fetchKmerTempC(),
@@ -1291,38 +1315,97 @@
         ]);
         const kmer = results[0].status === "fulfilled" ? results[0].value : { c: null, source: "error" };
         const fish = results[1].status === "fulfilled" ? results[1].value : { c: null, source: "error" };
-        const kmerC = kmer && typeof kmer.c === "number" ? kmer.c : null;
-        const fishC = fish && typeof fish.c === "number" ? fish.c : null;
+        highKmerC = kmer && typeof kmer.c === "number" ? kmer.c : null;
+        highFishC = fish && typeof fish.c === "number" ? fish.c : null;
 
         const kmerEl = document.getElementById("tempKmer");
         const fishEl = document.getElementById("tempFish");
-        if (kmerEl) kmerEl.textContent = formatTemp(kmerC);
-        if (fishEl) fishEl.textContent = formatTemp(fishC);
-        setTempSource("srcKmer", kmer ? kmer.source : "—", kmerC !== null);
-        setTempSource("srcFish", fish ? fish.source : "—", fishC !== null);
-        checkBlink("tempKmerBlock", kmerC, prevKmerC);
-        checkBlink("tempFishBlock", fishC, prevFishC);
-        if (kmerC !== null) prevKmerC = kmerC;
-        if (fishC !== null) prevFishC = fishC;
+        if (kmerEl) kmerEl.textContent = formatTemp(highKmerC);
+        if (fishEl) fishEl.textContent = formatTemp(highFishC);
+        setTempSource("srcKmer", kmer ? kmer.source : "—", highKmerC !== null);
+        setTempSource("srcFish", fish ? fish.source : "—", highFishC !== null);
 
         const wt = document.getElementById("weatherTime");
         if (wt) wt.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
         if (status) {
-          if (kmerC !== null || fishC !== null) {
-            status.textContent = "Live";
+          if (highKmerC !== null || highFishC !== null) {
+            status.textContent = "Highs set";
             status.className = "live";
           } else {
-            status.textContent = "Weather unavailable – retry";
+            status.textContent = "Highs unavailable";
             status.className = "";
           }
         }
+        evaluateLoadCalcWarning();
       } catch (e) {
         console.error(e);
-        if (status) { status.textContent = "Weather error – retry"; status.className = ""; }
-        setTempSource("srcKmer", "error", false);
-        setTempSource("srcFish", "error", false);
+        if (status) { status.textContent = "Weather error"; status.className = ""; }
       }
+    }
+
+    /** Current observed temp for exceedance check (not shown as HIGH TEMP). */
+    async function fetchCurrentObsC(stationIds, hourlyUrl) {
+      for (const id of stationIds) {
+        try {
+          const res = await fetch("https://api.weather.gov/stations/" + id + "/observations/latest", { headers: NWS_UA });
+          if (!res.ok) continue;
+          const data = await res.json();
+          const t = data.properties && data.properties.temperature;
+          if (t && typeof t.value === "number") return t.value;
+        } catch (e) {}
+      }
+      try {
+        const res = await fetch(hourlyUrl, { headers: NWS_UA });
+        if (res.ok) {
+          const data = await res.json();
+          const period = data.properties && data.properties.periods && data.properties.periods[0];
+          if (period && typeof period.temperature === "number") {
+            return toC(period.temperature, period.temperatureUnit || "F");
+          }
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    async function pollCurrentVsHigh() {
+      try {
+        const [k, f] = await Promise.all([
+          fetchCurrentObsC(["KMER", "KMCE"], KMER_HOURLY),
+          fetchCurrentObsC(["E7845", "WWNC1", "MPOC1"], FISH_HOURLY)
+        ]);
+        if (k !== null) currentKmerC = k;
+        if (f !== null) currentFishC = f;
+        evaluateLoadCalcWarning();
+      } catch (e) {
+        console.warn("current poll", e);
+      }
+    }
+
+    function evaluateLoadCalcWarning() {
+      const el = document.getElementById("loadCalcWarn");
+      if (!el) return;
+      const overK = (highKmerC !== null && currentKmerC !== null && (currentKmerC - highKmerC) > 5);
+      const overF = (highFishC !== null && currentFishC !== null && (currentFishC - highFishC) > 5);
+      if (overK || overF) {
+        const parts = [];
+        if (overK) parts.push("KMER now " + Math.round(currentKmerC) + "°C vs high " + Math.round(highKmerC) + "°C");
+        if (overF) parts.push("Fish Camp now " + Math.round(currentFishC) + "°C vs high " + Math.round(highFishC) + "°C");
+        el.textContent = "⚠ WARNING — Temp > forecast high by 5°C — REDO LOAD CALC  ·  " + parts.join(" · ");
+        el.classList.add("show");
+        // also blink the relevant temp blocks
+        if (overK) document.getElementById("tempKmerBlock")?.classList.add("blink");
+        if (overF) document.getElementById("tempFishBlock")?.classList.add("blink");
+      } else {
+        el.classList.remove("show");
+        document.getElementById("tempKmerBlock")?.classList.remove("blink");
+        document.getElementById("tempFishBlock")?.classList.remove("blink");
+      }
+    }
+
+    async function updateWeather() {
+      await updateForecastHighs();
+      await pollCurrentVsHigh();
     }
     function refreshWeather() { updateWeather(); }
 
