@@ -381,7 +381,7 @@
                 <div class="temp-block" id="tempKmerBlock">
                   <div class="temp-elev">~190′ KMER</div>
                   <div class="temp-value" id="tempKmer">--</div>
-                  <div class="temp-source">NWS METAR</div>
+                  <div class="temp-source">NWS</div>
                 </div>
                 <div class="temp-block" id="tempFishBlock">
                   <div class="temp-elev">~5,060′ Fish Camp</div>
@@ -887,86 +887,143 @@
     }
 
 
-    // Weather (Open-Meteo primary — works in browser; NWS secondary)
-    const KMER = { lat: 37.3805, lon: -120.5682 };
-    const FISH = { lat: 37.47675, lon: -119.63828 };
+    // Weather — NWS hourly forecast (reliable in browser)
+    // KMER Castle AFB grid HNX/30,133 ; Fish Camp grid HNX/63,131
+    const NWS_UA = { "Accept": "application/geo+json" };
+    const KMER_HOURLY = "https://api.weather.gov/gridpoints/HNX/30,133/forecast/hourly";
+    const FISH_HOURLY = "https://api.weather.gov/gridpoints/HNX/63,131/forecast/hourly";
+    const KMER_STATIONS = ["KMER", "KMCE"];
+    const FISH_STATIONS = ["E7845", "WWNC1", "MPOC1"];
     let prevKmerC = null, prevFishC = null;
 
+    function toC(value, unit) {
+      if (typeof value !== "number" || isNaN(value)) return null;
+      const u = (unit || "C").toString().toUpperCase();
+      if (u.startsWith("F")) return (value - 32) * 5 / 9;
+      return value;
+    }
+
+    async function fetchNwsStationTempC(stationId) {
+      const res = await fetch(
+        "https://api.weather.gov/stations/" + stationId + "/observations/latest",
+        { headers: NWS_UA }
+      );
+      if (!res.ok) throw new Error("obs " + stationId);
+      const data = await res.json();
+      const t = data.properties && data.properties.temperature;
+      if (!t || typeof t.value !== "number") throw new Error("no obs temp");
+      // NWS obs are in degC
+      return t.value;
+    }
+
+    async function fetchNwsHourlyTempC(hourlyUrl) {
+      const res = await fetch(hourlyUrl, { headers: NWS_UA });
+      if (!res.ok) throw new Error("hourly " + res.status);
+      const data = await res.json();
+      const period = data.properties && data.properties.periods && data.properties.periods[0];
+      if (!period || typeof period.temperature !== "number") throw new Error("no hourly temp");
+      return toC(period.temperature, period.temperatureUnit || "F");
+    }
+
+    async function fetchMetarTempC(icao) {
+      const res = await fetch("https://aviationweather.gov/api/data/metar?ids=" + icao + "&format=json");
+      if (!res.ok) throw new Error("metar");
+      const data = await res.json();
+      if (!Array.isArray(data) || !data.length) throw new Error("no metar");
+      const m = data[0];
+      if (typeof m.temp === "number") return m.temp;
+      if (m.rawOb) {
+        const match = m.rawOb.match(/\s(M?\d{2})\/(M?\d{2})\s/);
+        if (match) {
+          let t = match[1];
+          if (t.startsWith("M")) t = "-" + t.slice(1);
+          return parseInt(t, 10);
+        }
+      }
+      throw new Error("metar no temp");
+    }
+
     async function fetchOpenMeteoTempC(lat, lon) {
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m&temperature_unit=celsius`;
+      const url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat +
+        "&longitude=" + lon + "&current=temperature_2m&temperature_unit=celsius";
       const res = await fetch(url);
-      if (!res.ok) throw new Error("open-meteo");
+      if (!res.ok) throw new Error("open-meteo " + res.status);
       const data = await res.json();
       const t = data.current && data.current.temperature_2m;
-      if (typeof t !== "number") throw new Error("no temp");
+      if (typeof t !== "number") throw new Error("no om temp");
       return t;
     }
 
-    async function fetchKmerTempC() {
-      // Try aviationweather METAR first
-      try {
-        const res = await fetch("https://aviationweather.gov/api/data/metar?ids=KMER&format=json");
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data) && data.length) {
-            const m = data[0];
-            if (typeof m.temp === "number") return m.temp;
-            if (m.rawOb) {
-              const match = m.rawOb.match(/\s(M?\d{2})\/(M?\d{2})\s/);
-              if (match) {
-                let t = match[1];
-                if (t.startsWith("M")) t = "-" + t.slice(1);
-                return parseInt(t, 10);
-              }
-            }
-          }
-        }
-      } catch (e) {}
-      return fetchOpenMeteoTempC(KMER.lat, KMER.lon);
+    async function fetchTempChain(stationIds, hourlyUrl, lat, lon, preferMetarIcao) {
+      // 1) METAR if airport
+      if (preferMetarIcao) {
+        try { return await fetchMetarTempC(preferMetarIcao); } catch (e) {}
+      }
+      // 2) NWS station observations
+      for (const id of stationIds) {
+        try { return await fetchNwsStationTempC(id); } catch (e) {}
+      }
+      // 3) NWS hourly forecast (most reliable right now)
+      try { return await fetchNwsHourlyTempC(hourlyUrl); } catch (e) {}
+      // 4) Open-Meteo fallback
+      try { return await fetchOpenMeteoTempC(lat, lon); } catch (e) {}
+      return null;
     }
 
+    async function fetchKmerTempC() {
+      return fetchTempChain(KMER_STATIONS, KMER_HOURLY, 37.3805, -120.5682, "KMER");
+    }
     async function fetchFishTempC() {
-      try {
-        return await fetchOpenMeteoTempC(FISH.lat, FISH.lon);
-      } catch (e) {
-        throw e;
-      }
+      return fetchTempChain(FISH_STATIONS, FISH_HOURLY, 37.47675, -119.63828, null);
     }
 
     function formatTemp(c) {
-      if (c === null || isNaN(c)) return "--";
-      return `${Math.round(c * 9/5 + 32)}°F / ${Math.round(c)}°C`;
+      if (c === null || c === undefined || isNaN(c)) return "--";
+      return Math.round(c * 9/5 + 32) + "°F / " + Math.round(c) + "°C";
     }
 
     function checkBlink(id, cur, prev) {
       const el = document.getElementById(id);
+      if (!el) return;
       el.classList.remove("blink");
       if (prev !== null && cur !== null && Math.abs(cur - prev) > 5) el.classList.add("blink");
     }
 
     async function updateWeather() {
       const status = document.getElementById("weatherStatus");
-      status.textContent = "Updating…";
-      status.className = "";
+      if (status) { status.textContent = "Updating…"; status.className = ""; }
       try {
-        const [kmerC, fishC] = await Promise.all([
+        const results = await Promise.allSettled([
           fetchKmerTempC(),
           fetchFishTempC()
         ]);
-        document.getElementById("tempKmer").textContent = formatTemp(kmerC);
-        document.getElementById("tempFish").textContent = formatTemp(fishC);
+        const kmerC = results[0].status === "fulfilled" ? results[0].value : null;
+        const fishC = results[1].status === "fulfilled" ? results[1].value : null;
+
+        const kmerEl = document.getElementById("tempKmer");
+        const fishEl = document.getElementById("tempFish");
+        if (kmerEl) kmerEl.textContent = formatTemp(kmerC);
+        if (fishEl) fishEl.textContent = formatTemp(fishC);
         checkBlink("tempKmerBlock", kmerC, prevKmerC);
         checkBlink("tempFishBlock", fishC, prevFishC);
-        prevKmerC = kmerC;
-        prevFishC = fishC;
-        document.getElementById("weatherTime").textContent =
-          new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-        status.textContent = "Live";
-        status.className = "live";
+        if (kmerC !== null) prevKmerC = kmerC;
+        if (fishC !== null) prevFishC = fishC;
+
+        const wt = document.getElementById("weatherTime");
+        if (wt) wt.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+
+        if (status) {
+          if (kmerC !== null || fishC !== null) {
+            status.textContent = "NWS Live";
+            status.className = "live";
+          } else {
+            status.textContent = "Weather unavailable – retry";
+            status.className = "";
+          }
+        }
       } catch (e) {
         console.error(e);
-        status.textContent = "Weather error – retry";
-        status.className = "";
+        if (status) { status.textContent = "Weather error – retry"; status.className = ""; }
       }
     }
     function refreshWeather() { updateWeather(); }
