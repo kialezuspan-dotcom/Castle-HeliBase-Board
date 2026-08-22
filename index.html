@@ -1343,9 +1343,10 @@
         el.classList.add("ok");
         el.textContent = rule.label + ": " + rounded.toFixed(1) + " / " + rule.one.toFixed(1) + " hrs (1 day off) · " + rule.two.toFixed(1) + " hrs (2 days off)";
       } else {
-        // No flight hours in rolling 6-day window
+        // No flight in rolling 6-day window = 6 consecutive days without flight
+        // → 7th-day system/proficiency check flight is authorized (CARS)
         el.classList.add("warn");
-        el.textContent = "⚠ PROFICIENCY FLIGHT NEEDED — 0.0 hrs in the last 6 days";
+        el.textContent = "⚠ NO FLIGHT IN 6 DAYS — 7th-day proficiency / system check authorized today (30 min, standby, no retardant)";
       }
     }
 
