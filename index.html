@@ -653,22 +653,11 @@
 
         <div class="loadcalc-block">
           <div class="section-title">Load Calc</div>
-          <div class="loadcalc-drop" id="loadCalcDrop" tabindex="0">
-            Drop PDF here or click to upload
-            <div class="hint">PDF only · max ~20 MB</div>
-          </div>
-          <input type="file" id="loadCalcFile" accept="application/pdf,.pdf" hidden />
-          <div class="loadcalc-row" style="margin-top:6px;">
-            <input type="url" id="loadCalcUrl" placeholder="Or paste a link…" autocomplete="off" />
-            <a class="open-link disabled" id="loadCalcOpen" href="#" target="_blank" rel="noopener">Open</a>
-          </div>
-          <div class="loadcalc-status" id="loadCalcStatus"></div>
+          <label class="loadcalc-check-row" for="loadCalcPosted">
+            <input type="checkbox" id="loadCalcPosted" />
+            <span>Load Calc Posted</span>
+          </label>
           <div class="loadcalc-meta" id="loadCalcMeta"></div>
-          <div class="loadcalc-preview" id="loadCalcPreview">
-            <button type="button" class="loadcalc-preview-close edit-only" id="loadCalcCloseBtn"
-              title="Remove load calc" onclick="clearLoadCalc()" aria-label="Close load calc">×</button>
-            <iframe id="loadCalcFrame" title="Load Calc PDF"></iframe>
-          </div>
         </div>
       </div>
 
@@ -1044,7 +1033,6 @@
       try { refreshHourLabels(); } catch (e) {}
       try {
         setupBoardListeners();
-        setupLoadCalcDrop();
         attachTimeFormatter("timeUp");
         attachTimeFormatter("timeDown");
         attachTimeFormatter("cutoff");
@@ -1118,19 +1106,22 @@
         }
       } catch (e) {}
       const who = by || "unknown";
-      return "Uploaded by " + who + (when ? " · " + when : "");
+      return "Posted by " + who + (when ? " · " + when : "");
     }
 
     function refreshLoadCalcMetaUI() {
       const el = document.getElementById("loadCalcMeta");
+      const cb = document.getElementById("loadCalcPosted");
       if (!el) return;
-      const url = ((document.getElementById("loadCalcUrl") || {}).value || "").trim();
-      if (!url) {
+      if (cb && cb.checked && (loadCalcBy || loadCalcAt)) {
+        el.textContent = formatLoadCalcMeta(loadCalcBy, loadCalcAt);
+      } else if (cb && cb.checked) {
+        el.textContent = "Posted (no name on record)";
+      } else {
         el.textContent = "";
-        return;
       }
-      el.textContent = formatLoadCalcMeta(loadCalcBy, loadCalcAt);
     }
+
 
     function isSameLocalDay(iso) {
       if (!iso) return false;
@@ -1147,39 +1138,38 @@
 
     /** Clear yesterday's load calc so the board never keeps a stale PDF. */
     async function maybeClearStaleLoadCalc(data) {
-      const url = (data && data.load_calc_url) || "";
+      const posted = !!(data && (data.load_calc_posted === true || data.load_calc_posted === "true"));
       const at = data && data.load_calc_at;
-      if (!url) return false;
-      // If we have a timestamp and it's not today → clear
-      if (at && !isSameLocalDay(at)) {
-        return true;
-      }
-      // No timestamp but has URL from a previous schema — clear only if hours_anchor
-      // suggests an old board day (optional safety); prefer keeping if unknown
+      if (!posted && !(data && data.load_calc_url)) return false;
+      if (at && !isSameLocalDay(at)) return true;
       return false;
     }
 
 
-    function clearLoadCalc() {
-      if (isDisplayOnly) return;
-      clearLoadCalcLocal();
-      dirty = true;
-      scheduleAutoSave();
-      const st = document.getElementById("loadCalcStatus");
-      if (st) st.textContent = "Load calc removed — save to sync";
-      flashStatus("Load calc cleared");
-    }
 
     function clearLoadCalcLocal() {
-      const lcu = document.getElementById("loadCalcUrl");
-      if (lcu) lcu.value = "";
+      const cb = document.getElementById("loadCalcPosted");
+      if (cb) cb.checked = false;
       loadCalcBy = "";
       loadCalcAt = null;
-      updateLoadCalcLink();
       refreshLoadCalcMetaUI();
-      const st = document.getElementById("loadCalcStatus");
-      if (st) st.textContent = "Previous day load calc cleared";
     }
+
+    function onLoadCalcPostedChange() {
+      if (isDisplayOnly || applyingRemote) return;
+      const cb = document.getElementById("loadCalcPosted");
+      if (!cb) return;
+      if (cb.checked) {
+        loadCalcBy = currentUser ? (currentUser.email || currentUser.id || "editor") : "editor";
+        loadCalcAt = new Date().toISOString();
+      } else {
+        loadCalcBy = "";
+        loadCalcAt = null;
+      }
+      refreshLoadCalcMetaUI();
+      scheduleAutoSave();
+    }
+
 
     function showConflict(msg) {
       conflictPending = true;
@@ -1242,14 +1232,14 @@
       loadCalcAt = data.load_calc_at || null;
 
       const stale = await maybeClearStaleLoadCalc(data);
-      const lcu = document.getElementById("loadCalcUrl");
+      const cb = document.getElementById("loadCalcPosted");
       if (stale) {
         clearLoadCalcLocal();
-        // Persist clear if editor (so all devices drop yesterday's PDF)
         if (currentUser && !isDisplayOnly) {
           try {
             const ts = new Date().toISOString();
             await sb.from("board_state").update({
+              load_calc_posted: false,
               load_calc_url: "",
               load_calc_by: null,
               load_calc_at: null,
@@ -1258,9 +1248,10 @@
             lastServerUpdatedAt = ts;
           } catch (e) { console.warn("stale clear", e); }
         }
-      } else if (lcu) {
-        lcu.value = data.load_calc_url || "";
-        updateLoadCalcLink();
+      } else if (cb) {
+        const posted = data.load_calc_posted === true || data.load_calc_posted === "true"
+          || !!(data.load_calc_url && String(data.load_calc_url).trim());
+        cb.checked = !!posted;
         refreshLoadCalcMetaUI();
       }
       if (data.duty_mode) {
@@ -1316,10 +1307,10 @@
       }
 
       const dm = document.getElementById("dutyMode");
-      const url = ((document.getElementById("loadCalcUrl") || {}).value || "").trim();
-      // Stamp metadata when URL present and we don't already have today's stamp from upload
-      if (url) {
-        if (!loadCalcAt || !isSameLocalDay(loadCalcAt) || !loadCalcBy) {
+      const cb = document.getElementById("loadCalcPosted");
+      const posted = !!(cb && cb.checked);
+      if (posted) {
+        if (!loadCalcAt || !loadCalcBy) {
           loadCalcBy = (currentUser.email || currentUser.id || "editor");
           loadCalcAt = new Date().toISOString();
         }
@@ -1349,9 +1340,10 @@
         fh5: document.getElementById("fh5").value,
         fh6: document.getElementById("fh6").value,
         notes: document.getElementById("notesField").value,
-        load_calc_url: url,
-        load_calc_by: loadCalcBy || null,
-        load_calc_at: loadCalcAt || null,
+        load_calc_posted: posted,
+        load_calc_url: "",
+        load_calc_by: posted ? (loadCalcBy || null) : null,
+        load_calc_at: posted ? (loadCalcAt || null) : null,
         selected_manager_id: selectedMgrId || null,
         duty_mode: dm ? dm.value : "day_dual",
         hours_anchor_date: rollingDates()[0],
@@ -1394,10 +1386,9 @@
         notes.addEventListener("change", () => { autosizeNotes(); scheduleAutoSave(); });
         setTimeout(autosizeNotes, 0);
       }
-      const lcu = document.getElementById("loadCalcUrl");
-      if (lcu) {
-        lcu.addEventListener("input", () => { updateLoadCalcLink(); scheduleAutoSave(); });
-        lcu.addEventListener("change", () => { updateLoadCalcLink(); scheduleAutoSave(); });
+      const lcp = document.getElementById("loadCalcPosted");
+      if (lcp) {
+        lcp.addEventListener("change", onLoadCalcPostedChange);
       }
       // Ctrl/Cmd+S
       document.addEventListener("keydown", (e) => {
@@ -1456,14 +1447,14 @@
             document.getElementById("fh5").value = shifted[4];
             document.getElementById("fh6").value = shifted[5];
             document.getElementById("notesField").value = d.notes || "";
-            const lcu = document.getElementById("loadCalcUrl");
-            if (lcu) {
-              lcu.value = d.load_calc_url || "";
-              loadCalcBy = d.load_calc_by || "";
-              loadCalcAt = d.load_calc_at || null;
-              updateLoadCalcLink();
-              refreshLoadCalcMetaUI();
+            const lcp = document.getElementById("loadCalcPosted");
+            loadCalcBy = d.load_calc_by || "";
+            loadCalcAt = d.load_calc_at || null;
+            if (lcp) {
+              lcp.checked = d.load_calc_posted === true || d.load_calc_posted === "true"
+                || !!(d.load_calc_url && String(d.load_calc_url).trim());
             }
+            refreshLoadCalcMetaUI();
             if (d.duty_mode) {
               const dm = document.getElementById("dutyMode");
               if (dm) dm.value = d.duty_mode;
@@ -1962,7 +1953,7 @@
         fh5: document.getElementById("fh5").value,
         fh6: document.getElementById("fh6").value,
         notes: document.getElementById("notesField").value,
-        load_calc_url: (document.getElementById("loadCalcUrl") || {}).value || "",
+        load_calc_posted: !!(document.getElementById("loadCalcPosted") || {}).checked,
         duty_mode: dm ? dm.value : "day_dual",
         manager_id: selectedMgrId || null
       };
@@ -2101,91 +2092,9 @@
     window.updateDutyRule = updateDutyRule;
 
 
-    function setupLoadCalcDrop() {
-      const drop = document.getElementById("loadCalcDrop");
-      const fileInput = document.getElementById("loadCalcFile");
-      if (!drop || !fileInput) return;
 
-      drop.addEventListener("click", () => {
-        if (isDisplayOnly || !currentUser) return;
-        fileInput.click();
-      });
-      fileInput.addEventListener("change", () => {
-        if (fileInput.files && fileInput.files[0]) uploadLoadCalcPdf(fileInput.files[0]);
-        fileInput.value = "";
-      });
-      ["dragenter", "dragover"].forEach(ev => {
-        drop.addEventListener(ev, e => {
-          e.preventDefault(); e.stopPropagation();
-          drop.classList.add("dragover");
-        });
-      });
-      ["dragleave", "drop"].forEach(ev => {
-        drop.addEventListener(ev, e => {
-          e.preventDefault(); e.stopPropagation();
-          drop.classList.remove("dragover");
-        });
-      });
-      drop.addEventListener("drop", e => {
-        if (isDisplayOnly || !currentUser) return;
-        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-        if (f) uploadLoadCalcPdf(f);
-      });
-    }
+    function updateLoadCalcLink() { refreshLoadCalcMetaUI(); }
 
-    async function uploadLoadCalcPdf(file) {
-      const status = document.getElementById("loadCalcStatus");
-      if (!currentUser) {
-        if (status) status.textContent = "Sign in to upload.";
-        return;
-      }
-      if (!file || file.type !== "application/pdf") {
-        if (status) status.textContent = "Please drop a PDF file.";
-        return;
-      }
-      if (file.size > 20 * 1024 * 1024) {
-        if (status) status.textContent = "File too large (max 20 MB).";
-        return;
-      }
-      if (status) status.textContent = "Uploading…";
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const path = currentBaseId + "/" + Date.now() + "_" + safeName;
-      const { error: upErr } = await sb.storage.from("load-calcs").upload(path, file, {
-        contentType: "application/pdf",
-        upsert: true
-      });
-      if (upErr) {
-        console.error(upErr);
-        if (status) status.textContent = "Upload failed: " + (upErr.message || "create storage bucket load-calcs");
-        return;
-      }
-      const { data: pub } = sb.storage.from("load-calcs").getPublicUrl(path);
-      const url = pub && pub.publicUrl;
-      if (!url) {
-        if (status) status.textContent = "Uploaded but no public URL — check bucket settings.";
-        return;
-      }
-      const input = document.getElementById("loadCalcUrl");
-      if (input) input.value = url;
-      loadCalcBy = (currentUser.email || currentUser.id || "editor");
-      loadCalcAt = new Date().toISOString();
-      updateLoadCalcLink();
-      refreshLoadCalcMetaUI();
-      if (status) status.textContent = "PDF uploaded · saving…";
-      dirty = true;
-      await saveBoard(true);
-      if (status) status.textContent = "PDF ready — use Open";
-      await writeAudit("load_calc_upload", safeName);
-    }
-
-
-    function autosizeNotes() {
-      const ta = document.getElementById("notesField");
-      if (!ta) return;
-      ta.style.height = "auto";
-      const h = Math.max(110, ta.scrollHeight);
-      ta.style.height = h + "px";
-    }
 
     function updateLoadCalcLink() {
       const input = document.getElementById("loadCalcUrl");
@@ -2279,7 +2188,7 @@
     window.printBoard = printBoard;
     window.toggleKioskFullscreen = toggleKioskFullscreen;
     window.updateLoadCalcLink = updateLoadCalcLink;
-    window.clearLoadCalc = clearLoadCalc;
+    window.clearLoadCalc = clearLoadCalcLocal;
     window.resolveConflictReload = resolveConflictReload;
     window.resolveConflictOverwrite = resolveConflictOverwrite;
 
