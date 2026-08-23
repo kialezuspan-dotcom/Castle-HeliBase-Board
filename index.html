@@ -1706,29 +1706,39 @@
     }
 
 
-    // Weather — NWS daily HIGH; airport depends on base (Castle=KMER, Mariposa=KMPI)
-    const NWS_UA = { "Accept": "application/geo+json" };
-    const FISH_DAILY = "https://api.weather.gov/gridpoints/HNX/63,131/forecast";
+    // Weather — NWS Fire Weather Planning Forecast (HNX FWF)
+    // Castle airport high: CAZ580 San Joaquin Valley (KMER)
+    // Mariposa airport high: CAZ590 Central Sierra Foothills (KMPI)
+    // Fish Camp high (both bases): CAZ592 Central Sierra
+    // Zone highs are ranges (e.g. 94-104); we use the UPPER end for load-calc safety.
+    const NWS_UA = { "Accept": "application/geo+json", "User-Agent": "CastleHelibaseBoard/1.0 (helibase ops)" };
     const FISH_HOURLY = "https://api.weather.gov/gridpoints/HNX/63,131/forecast/hourly";
     const WX_SITES = {
       castle: {
         icao: "KMER",
         elevLabel: "~190′ KMER",
-        daily: "https://api.weather.gov/gridpoints/HNX/30,133/forecast",
+        fwfZone: "CAZ580",
+        fwfName: "CAZ580 SJ Valley",
         hourly: "https://api.weather.gov/gridpoints/HNX/30,133/forecast/hourly",
+        stations: ["KMER", "KMCE"],
         lat: 37.3805, lon: -120.5682
       },
       mariposa: {
         icao: "KMPI",
         elevLabel: "~2,250′ KMPI",
-        daily: "https://api.weather.gov/gridpoints/HNX/49,134/forecast",
+        fwfZone: "CAZ590",
+        fwfName: "CAZ590 Sierra Foothills",
         hourly: "https://api.weather.gov/gridpoints/HNX/49,134/forecast/hourly",
+        stations: ["KMPI"],
         lat: 37.5109, lon: -120.0400
       }
     };
+    const FISH_FWF_ZONE = "CAZ592";
+    const FISH_FWF_NAME = "CAZ592 Central Sierra";
     let prevKmerC = null, prevFishC = null;
     let highKmerC = null, highFishC = null;
     let currentKmerC = null, currentFishC = null;
+    let fwfCache = { text: null, fetchedAt: 0 };
 
     function toC(value, unit) {
       if (typeof value !== "number" || isNaN(value)) return null;
@@ -1737,52 +1747,60 @@
       return value;
     }
 
-    async function fetchNwsDailyHighC(dailyUrl) {
-      const res = await fetch(dailyUrl, { headers: NWS_UA });
-      if (!res.ok) throw new Error("daily " + res.status);
-      const data = await res.json();
-      const periods = (data.properties && data.properties.periods) || [];
-      // Prefer today's daytime period (isDaytime true) — that temperature is the forecast high
-      let day = periods.find(p => p.isDaytime === true);
-      if (!day) day = periods[0];
-      if (!day || typeof day.temperature !== "number") throw new Error("no daily high");
-      let label = "NWS high";
-      if (day.name) label = "NWS high · " + day.name;
-      return { c: toC(day.temperature, day.temperatureUnit || "F"), source: label };
-    }
-
-    async function fetchNwsHourlyTempC(hourlyUrl) {
-      const res = await fetch(hourlyUrl, { headers: NWS_UA });
-      if (!res.ok) throw new Error("hourly " + res.status);
-      const data = await res.json();
-      const period = data.properties && data.properties.periods && data.properties.periods[0];
-      if (!period || typeof period.temperature !== "number") throw new Error("no hourly temp");
-      let label = "NWS hourly (fallback)";
-      if (period.startTime) {
-        try {
-          const t = new Date(period.startTime);
-          label = "Hourly " + t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-        } catch (e) {}
+    async function fetchLatestFwfText() {
+      const now = Date.now();
+      // Reuse product for 10 minutes
+      if (fwfCache.text && (now - fwfCache.fetchedAt) < 10 * 60 * 1000) {
+        return fwfCache.text;
       }
-      return { c: toC(period.temperature, period.temperatureUnit || "F"), source: label };
+      const listRes = await fetch("https://api.weather.gov/products/types/FWF/locations/HNX", { headers: NWS_UA });
+      if (!listRes.ok) throw new Error("FWF list " + listRes.status);
+      const list = await listRes.json();
+      const items = list["@graph"] || list.graph || [];
+      if (!items.length) throw new Error("no FWF products");
+      // First item is newest
+      const id = items[0].id || (items[0]["@id"] || "").split("/").pop();
+      const prodUrl = items[0]["@id"] || ("https://api.weather.gov/products/" + id);
+      const prodRes = await fetch(prodUrl, { headers: NWS_UA });
+      if (!prodRes.ok) throw new Error("FWF product " + prodRes.status);
+      const prod = await prodRes.json();
+      const text = prod.productText || "";
+      if (!text) throw new Error("empty FWF text");
+      fwfCache = { text: text, fetchedAt: now };
+      return text;
     }
 
-    async function fetchOpenMeteoDailyHighC(lat, lon) {
-      const url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat +
-        "&longitude=" + lon + "&daily=temperature_2m_max&temperature_unit=celsius&forecast_days=1";
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("open-meteo " + res.status);
-      const data = await res.json();
-      const arr = data.daily && data.daily.temperature_2m_max;
-      if (!arr || typeof arr[0] !== "number") throw new Error("no om high");
-      return { c: arr[0], source: "Open-Meteo high" };
+    function extractFwfZoneBlock(text, zone) {
+      const re = new RegExp("(" + zone + "-\d+-[^\n]*\n[\s\S]*?)(?=\nCAZ\d{3}-|$)");
+      const m = text.match(re);
+      return m ? m[1] : null;
     }
 
-    async function fetchTempHigh(dailyUrl, hourlyUrl, lat, lon) {
-      try { return await fetchNwsDailyHighC(dailyUrl); } catch (e) {}
-      try { return await fetchNwsHourlyTempC(hourlyUrl); } catch (e) {}
-      try { return await fetchOpenMeteoDailyHighC(lat, lon); } catch (e) {}
-      return { c: null, source: "unavailable" };
+    function parseTodayMaxFRange(block) {
+      if (!block) return null;
+      const todayRe = /\.TODAY\.\.\.([\s\S]*?)(?=\n\.[A-Z]|\n\$\$|\nCAZ\d{3}-)/i;
+      const tm = block.match(todayRe);
+      const sec = tm ? tm[1] : block.slice(0, 900);
+      let m = sec.match(/Max Temperature\.{2,}\s*(\d{2,3})\s*-\s*(\d{2,3})/i);
+      if (m) return { lo: parseInt(m[1], 10), hi: parseInt(m[2], 10) };
+      m = sec.match(/Max Temperature\.{2,}\s*(\d{2,3})\b/i);
+      if (m) {
+        const v = parseInt(m[1], 10);
+        return { lo: v, hi: v };
+      }
+      return null;
+    }
+
+    async function fetchFwfHighC(zone, label) {
+      const text = await fetchLatestFwfText();
+      const block = extractFwfZoneBlock(text, zone);
+      const range = parseTodayMaxFRange(block);
+      if (!range) throw new Error("no max temp in " + zone);
+      // Upper end of Fire Weather zone range (conservative for load calc)
+      const f = range.hi;
+      const c = toC(f, "F");
+      const source = "FWF " + label + " · high " + range.lo + "–" + range.hi + "°F";
+      return { c: c, source: source, fLow: range.lo, fHigh: range.hi };
     }
 
     function airportSite() {
@@ -1795,14 +1813,38 @@
       if (el) el.textContent = site.elevLabel;
     }
 
-    async function fetchKmerTempC() {
-      // "Airport" high for current base (KMER or KMPI)
-      const site = airportSite();
-      return fetchTempHigh(site.daily, site.hourly, site.lat, site.lon);
+    // Fallback: NWS grid daily high if FWF fails
+    async function fetchGridDailyHighC(dailyUrl) {
+      const res = await fetch(dailyUrl, { headers: NWS_UA });
+      if (!res.ok) throw new Error("daily " + res.status);
+      const data = await res.json();
+      const periods = (data.properties && data.properties.periods) || [];
+      let day = periods.find(p => p.isDaytime === true);
+      if (!day) day = periods[0];
+      if (!day || typeof day.temperature !== "number") throw new Error("no daily high");
+      return { c: toC(day.temperature, day.temperatureUnit || "F"), source: "NWS grid high (fallback)" };
     }
-    async function fetchFishTempC() {
-      // Fish Camp same for both bases
-      return fetchTempHigh(FISH_DAILY, FISH_HOURLY, 37.47675, -119.63828);
+
+    async function fetchAirportHighC() {
+      const site = airportSite();
+      try {
+        return await fetchFwfHighC(site.fwfZone, site.fwfName);
+      } catch (e) {
+        console.warn("FWF airport failed", e);
+        const daily = site.icao === "KMPI"
+          ? "https://api.weather.gov/gridpoints/HNX/49,134/forecast"
+          : "https://api.weather.gov/gridpoints/HNX/30,133/forecast";
+        return await fetchGridDailyHighC(daily);
+      }
+    }
+
+    async function fetchFishHighC() {
+      try {
+        return await fetchFwfHighC(FISH_FWF_ZONE, FISH_FWF_NAME);
+      } catch (e) {
+        console.warn("FWF Fish Camp failed", e);
+        return await fetchGridDailyHighC("https://api.weather.gov/gridpoints/HNX/63,131/forecast");
+      }
     }
 
     function formatTemp(c) {
@@ -1826,11 +1868,11 @@
 
     async function updateForecastHighs() {
       const status = document.getElementById("weatherStatus");
-      if (status) { status.textContent = "Updating highs…"; status.className = ""; }
+      if (status) { status.textContent = "Updating Fire Wx…"; status.className = ""; }
       try {
         const results = await Promise.allSettled([
-          fetchKmerTempC(),
-          fetchFishTempC()
+          fetchAirportHighC(),
+          fetchFishHighC()
         ]);
         const kmer = results[0].status === "fulfilled" ? results[0].value : { c: null, source: "error" };
         const fish = results[1].status === "fulfilled" ? results[1].value : { c: null, source: "error" };
@@ -1849,7 +1891,7 @@
 
         if (status) {
           if (highKmerC !== null || highFishC !== null) {
-            status.textContent = "Highs set";
+            status.textContent = "Fire Wx highs";
             status.className = "live";
           } else {
             status.textContent = "Highs unavailable";
@@ -1890,7 +1932,7 @@
     async function pollCurrentVsHigh() {
       try {
         const site = airportSite();
-        const aptStations = site.icao === "KMPI" ? ["KMPI"] : ["KMER", "KMCE"];
+        const aptStations = site.stations || (site.icao === "KMPI" ? ["KMPI"] : ["KMER", "KMCE"]);
         const [k, f] = await Promise.all([
           fetchCurrentObsC(aptStations, site.hourly),
           fetchCurrentObsC(["E7845", "WWNC1", "MPOC1"], FISH_HOURLY)
