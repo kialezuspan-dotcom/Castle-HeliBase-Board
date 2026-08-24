@@ -616,9 +616,46 @@
       display: none !important; /* display is read-only */
     }
 
+
+    .board-saved {
+      text-align: center;
+      color: rgba(255,255,255,0.75);
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      margin: -6px -10px 10px;
+      padding: 0 10px 8px;
+      background: var(--tape-title);
+      border-bottom: 2px solid rgba(0,0,0,0.12);
+      line-height: 1.35;
+    }
+    body.display-mode .board-saved {
+      font-size: 0.75rem;
+      color: rgba(255,255,255,0.88);
+      font-weight: 700;
+    }
+    .board-saved.offline-stale {
+      color: #ffe082;
+    }
+    #offlineBanner {
+      display: none;
+      position: fixed; top: 0; left: 0; right: 0; z-index: 13000;
+      background: #5d4037; color: #fff; text-align: center;
+      padding: 10px 14px; font-weight: 700; font-size: 0.9rem;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+    }
+    #offlineBanner.show { display: block; }
+    #offlineBanner .sub {
+      font-weight: 500; font-size: 0.8rem; opacity: 0.9; margin-top: 2px;
+    }
+
   </style>
 </head>
 <body>
+  <div id="offlineBanner">
+    <div>⚠ OFFLINE — showing last saved board on this device</div>
+    <div class="sub">Edits will not sync until the network returns. Use paper board if this data is stale.</div>
+  </div>
   <div id="conflictBanner">
     <span id="conflictMsg">Another device saved changes while you were editing.</span>
     <button type="button" onclick="resolveConflictReload()">Reload their version</button>
@@ -699,6 +736,7 @@
       <!-- RIGHT: blue-tape status board -->
       <div class="right-panel">
         <div class="board-title">Status Board · Live <span class="base-badge" id="baseBadge">CASTLE</span></div>
+        <div class="board-saved" id="boardSaved">Last saved —</div>
 
         <div class="section row-3">
           <div class="cell">
@@ -913,6 +951,8 @@
     let dirty = false;
     let lastIncidentName = null;
     let lastServerUpdatedAt = null;
+    let lastSavedBy = null;
+    let boardFromCache = false;
     let conflictPending = false;
     let loadCalcBy = "";
     let loadCalcAt = null;
@@ -1075,6 +1115,7 @@
       try { updateDutyRule(); } catch (e) { console.error("duty", e); }
       try { await loadAll(); } catch (e) { console.error("loadAll", e); }
       try { subscribeRealtime(); } catch (e) { console.error("realtime", e); }
+      try { setupConnectivityWatch(); } catch (e) { console.warn("connectivity", e); }
       try {
         updateWeather(); // highs + first current check
         setInterval(updateForecastHighs, 30 * 60 * 1000); // refresh forecast high every 30 min
@@ -1236,10 +1277,117 @@
     }
 
 
+
+    function shortUserLabel(u) {
+      if (!u) return "";
+      if (typeof u === "string") {
+        if (u.indexOf("@") > 0) return u.split("@")[0];
+        return u;
+      }
+      if (u.email) return u.email.split("@")[0];
+      return u.id || "editor";
+    }
+
+    function formatSavedStamp(iso, by) {
+      if (!iso && !by) return "Last saved —";
+      let when = "";
+      try {
+        if (iso) {
+          const d = new Date(iso);
+          when = d.toLocaleString([], {
+            month: "numeric", day: "numeric",
+            hour: "2-digit", minute: "2-digit", hour12: false
+          });
+        }
+      } catch (e) {}
+      const who = shortUserLabel(by);
+      let s = "Last saved";
+      if (when) s += " · " + when;
+      if (who) s += " · " + who;
+      if (boardFromCache) s += " · cached";
+      return s;
+    }
+
+    function refreshSavedStamp() {
+      const el = document.getElementById("boardSaved");
+      if (!el) return;
+      el.textContent = formatSavedStamp(lastServerUpdatedAt, lastSavedBy);
+      el.classList.toggle("offline-stale", !!boardFromCache || !navigator.onLine);
+    }
+
+    function cacheKey() {
+      return "hsb_board_cache_" + (currentBaseId || "castle");
+    }
+
+    function cacheBoardSnapshot(data) {
+      try {
+        const payload = Object.assign({}, data || {}, {
+          _cachedAt: new Date().toISOString(),
+          base_id: currentBaseId
+        });
+        localStorage.setItem(cacheKey(), JSON.stringify(payload));
+      } catch (e) { console.warn("cache write", e); }
+    }
+
+    function readBoardCache() {
+      try {
+        const raw = localStorage.getItem(cacheKey());
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function setOfflineUI(offline) {
+      const ban = document.getElementById("offlineBanner");
+      if (ban) ban.classList.toggle("show", !!offline);
+      refreshSavedStamp();
+    }
+
+    function setupConnectivityWatch() {
+      window.addEventListener("online", () => {
+        setOfflineUI(false);
+        flashStatus("Back online — refreshing…");
+        boardFromCache = false;
+        loadBoard().catch(() => {});
+      });
+      window.addEventListener("offline", () => {
+        setOfflineUI(true);
+        flashStatus("Offline — showing last cache if available");
+      });
+      setOfflineUI(!navigator.onLine);
+    }
+
+
     async function loadBoard() {
-      const { data, error } = await sb.from("board_state").select("*").eq("base_id", currentBaseId).maybeSingle();
-      if (error) { console.error(error); return; }
-      if (!data) return;
+      let data = null;
+      let error = null;
+      try {
+        const res = await sb.from("board_state").select("*").eq("base_id", currentBaseId).maybeSingle();
+        data = res.data;
+        error = res.error;
+      } catch (e) {
+        error = e;
+      }
+      if (error || !data) {
+        if (error) console.error(error);
+        const cached = readBoardCache();
+        if (cached) {
+          data = cached;
+          boardFromCache = true;
+          setOfflineUI(true);
+          flashStatus("Using cached board (network unavailable)");
+        } else {
+          boardFromCache = false;
+          refreshSavedStamp();
+          return;
+        }
+      } else {
+        boardFromCache = false;
+        if (navigator.onLine) setOfflineUI(false);
+        cacheBoardSnapshot(data);
+      }
       applyingRemote = true;
       document.getElementById("aab1").value = data.aab1 || "";
       document.getElementById("aab2").value = data.aab2 || "";
@@ -1263,8 +1411,10 @@
       document.getElementById("fh6").value = shifted[5];
       document.getElementById("notesField").value = data.notes || "";
       lastServerUpdatedAt = data.updated_at || null;
+      lastSavedBy = data.last_saved_by || null;
       loadCalcBy = data.load_calc_by || "";
       loadCalcAt = data.load_calc_at || null;
+      refreshSavedStamp();
 
       const stale = await maybeClearStaleLoadCalc(data);
       const cb = document.getElementById("loadCalcPosted");
@@ -1382,6 +1532,7 @@
         selected_manager_id: selectedMgrId || null,
         duty_mode: dm ? dm.value : "day_dual",
         hours_anchor_date: rollingDates()[0],
+        last_saved_by: currentUser.email || currentUser.id || "editor",
         updated_at: new Date().toISOString()
       };
       const { error } = await sb.from("board_state").upsert(payload, { onConflict: "base_id" });
@@ -1392,8 +1543,17 @@
       } else {
         dirty = false;
         lastServerUpdatedAt = payload.updated_at;
+        lastSavedBy = payload.last_saved_by;
+        boardFromCache = false;
         hideConflict();
         refreshLoadCalcMetaUI();
+        refreshSavedStamp();
+        cacheBoardSnapshot(Object.assign({}, payload, {
+          selected_manager_id: payload.selected_manager_id,
+          load_calc_by: payload.load_calc_by,
+          load_calc_at: payload.load_calc_at,
+          load_calc_posted: payload.load_calc_posted
+        }));
         flashStatus("Saved · synced");
         const hint = document.getElementById("autosaveHint");
         if (hint) hint.textContent = "Saved · auto-saves 30s after you stop typing · Ctrl/Cmd+S";
@@ -1498,8 +1658,12 @@
             document.getElementById("mgrSelect").value = selectedMgrId || "";
             onMgrSelect();
             lastServerUpdatedAt = d.updated_at || lastServerUpdatedAt;
+            lastSavedBy = d.last_saved_by || lastSavedBy;
+            boardFromCache = false;
             refreshHourLabels();
             updateDutyRule();
+            refreshSavedStamp();
+            cacheBoardSnapshot(d);
             applyingRemote = false;
             flashStatus("Updated from another device");
           }
