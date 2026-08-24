@@ -1711,7 +1711,8 @@
     // Mariposa airport high: CAZ590 Central Sierra Foothills (KMPI)
     // Fish Camp high (both bases): CAZ592 Central Sierra
     // Zone highs are ranges (e.g. 94-104); we use the UPPER end for load-calc safety.
-    const NWS_UA = { "Accept": "application/geo+json", "User-Agent": "CastleHelibaseBoard/1.0 (helibase ops)" };
+    // Do NOT set User-Agent — browsers block that header and it can break fetch.
+    const NWS_UA = { "Accept": "application/ld+json, application/geo+json, application/json" };
     const FISH_HOURLY = "https://api.weather.gov/gridpoints/HNX/63,131/forecast/hourly";
     const WX_SITES = {
       castle: {
@@ -1747,61 +1748,88 @@
       return value;
     }
 
+
     async function fetchLatestFwfText() {
       const now = Date.now();
-      // Reuse product for 10 minutes
       if (fwfCache.text && (now - fwfCache.fetchedAt) < 10 * 60 * 1000) {
         return fwfCache.text;
       }
-      const listRes = await fetch("https://api.weather.gov/products/types/FWF/locations/HNX", { headers: NWS_UA });
-      if (!listRes.ok) throw new Error("FWF list " + listRes.status);
-      const list = await listRes.json();
-      const items = list["@graph"] || list.graph || [];
-      if (!items.length) throw new Error("no FWF products");
-      // First item is newest
-      const id = items[0].id || (items[0]["@id"] || "").split("/").pop();
-      const prodUrl = items[0]["@id"] || ("https://api.weather.gov/products/" + id);
-      const prodRes = await fetch(prodUrl, { headers: NWS_UA });
-      if (!prodRes.ok) throw new Error("FWF product " + prodRes.status);
-      const prod = await prodRes.json();
-      const text = prod.productText || "";
-      if (!text) throw new Error("empty FWF text");
-      fwfCache = { text: text, fetchedAt: now };
-      return text;
+      try {
+        const listRes = await fetch("https://api.weather.gov/products/types/FWF/locations/HNX", { headers: NWS_UA });
+        if (!listRes.ok) throw new Error("FWF list HTTP " + listRes.status);
+        const list = await listRes.json();
+        const items = list["@graph"] || list.graph || [];
+        if (!items.length) throw new Error("FWF list empty");
+        const prodUrl = items[0]["@id"] || ("https://api.weather.gov/products/" + (items[0].id || ""));
+        if (!prodUrl) throw new Error("no product url");
+        const prodRes = await fetch(prodUrl, { headers: NWS_UA });
+        if (!prodRes.ok) throw new Error("FWF product HTTP " + prodRes.status);
+        const prod = await prodRes.json();
+        let text = prod.productText || "";
+        text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+        if (text.length < 100) throw new Error("FWF text too short");
+        fwfCache = { text: text, fetchedAt: now };
+        return text;
+      } catch (e1) {
+        console.warn("FWF api.weather.gov failed", e1);
+        try {
+          const url = "https://forecast.weather.gov/product.php?site=HNX&issuedby=HNX&product=FWF&format=txt&version=1&glossary=0";
+          const res = await fetch(url);
+          if (!res.ok) throw new Error("FWF txt HTTP " + res.status);
+          let text = await res.text();
+          text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+          if (text.indexOf("<html") >= 0 || text.indexOf("<!DOCTYPE") >= 0) {
+            const pre = text.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
+            if (pre) text = pre[1];
+            else throw new Error("FWF txt was HTML without pre");
+          }
+          if (text.indexOf("CAZ580") < 0) throw new Error("FWF txt missing CAZ580");
+          fwfCache = { text: text, fetchedAt: now };
+          return text;
+        } catch (e2) {
+          console.warn("FWF txt fallback failed", e2);
+          throw new Error((e1 && e1.message) || "FWF fetch failed");
+        }
+      }
     }
 
     function extractFwfZoneBlock(text, zone) {
-      const re = new RegExp("(" + zone + "-\d+-[^\n]*\n[\s\S]*?)(?=\nCAZ\d{3}-|$)");
+      if (!text || !zone) return null;
+      const re = new RegExp("(" + zone + "-\\d*[\\s\\S]*?)(?=\\nCAZ\\d{3}-|$)");
       const m = text.match(re);
       return m ? m[1] : null;
     }
 
     function parseTodayMaxFRange(block) {
       if (!block) return null;
-      const todayRe = /\.TODAY\.\.\.([\s\S]*?)(?=\n\.[A-Z]|\n\$\$|\nCAZ\d{3}-)/i;
-      const tm = block.match(todayRe);
-      const sec = tm ? tm[1] : block.slice(0, 900);
-      let m = sec.match(/Max Temperature\.{2,}\s*(\d{2,3})\s*-\s*(\d{2,3})/i);
+      const b = block.replace(/\u00a0/g, " ");
+      let sec = b;
+      const tm = b.match(/\.TODAY\.\.\.([\s\S]*?)(?=\n\.[A-Z]|\n\$\$|\nCAZ\d{3}-)/i);
+      if (tm) sec = tm[1];
+      let m = sec.match(/Max\s*Temperature\.+\s*(\d{2,3})\s*-\s*(\d{2,3})/i);
       if (m) return { lo: parseInt(m[1], 10), hi: parseInt(m[2], 10) };
-      m = sec.match(/Max Temperature\.{2,}\s*(\d{2,3})\b/i);
+      m = sec.match(/Max\s*Temperature\.+\s*(\d{2,3})\b/i);
       if (m) {
         const v = parseInt(m[1], 10);
         return { lo: v, hi: v };
       }
+      m = b.match(/Max\s*Temperature\.+\s*(\d{2,3})\s*-\s*(\d{2,3})/i);
+      if (m) return { lo: parseInt(m[1], 10), hi: parseInt(m[2], 10) };
       return null;
     }
 
     async function fetchFwfHighC(zone, label) {
       const text = await fetchLatestFwfText();
       const block = extractFwfZoneBlock(text, zone);
+      if (!block) throw new Error("zone block missing " + zone);
       const range = parseTodayMaxFRange(block);
       if (!range) throw new Error("no max temp in " + zone);
-      // Upper end of Fire Weather zone range (conservative for load calc)
       const f = range.hi;
       const c = toC(f, "F");
-      const source = "FWF " + label + " · high " + range.lo + "–" + range.hi + "°F";
+      const source = "FWF " + label + " · " + range.lo + "–" + range.hi + "°F";
       return { c: c, source: source, fLow: range.lo, fHigh: range.hi };
     }
+
 
     function airportSite() {
       return WX_SITES[currentBaseId] || WX_SITES.castle;
@@ -1834,7 +1862,9 @@
         const daily = site.icao === "KMPI"
           ? "https://api.weather.gov/gridpoints/HNX/49,134/forecast"
           : "https://api.weather.gov/gridpoints/HNX/30,133/forecast";
-        return await fetchGridDailyHighC(daily);
+        const fb = await fetchGridDailyHighC(daily);
+        fb.source = "Grid fallback · FWF: " + (e && e.message ? e.message : "error");
+        return fb;
       }
     }
 
@@ -1843,7 +1873,9 @@
         return await fetchFwfHighC(FISH_FWF_ZONE, FISH_FWF_NAME);
       } catch (e) {
         console.warn("FWF Fish Camp failed", e);
-        return await fetchGridDailyHighC("https://api.weather.gov/gridpoints/HNX/63,131/forecast");
+        const fb = await fetchGridDailyHighC("https://api.weather.gov/gridpoints/HNX/63,131/forecast");
+        fb.source = "Grid fallback · FWF: " + (e && e.message ? e.message : "error");
+        return fb;
       }
     }
 
