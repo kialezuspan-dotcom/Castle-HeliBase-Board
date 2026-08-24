@@ -273,20 +273,71 @@
     .mgr-list-item button { font-size: 0.7rem; padding: 3px 8px; }
 
 
-    /* LOGIN */
+    /* LOGIN — refined stage; original card window preserved */
     #loginScreen {
       position: fixed; inset: 0; z-index: 10000;
       display: none; align-items: center; justify-content: center;
       flex-direction: column; gap: 0; color: #e8eef5;
-      padding: 20px 14px;
+      padding: 28px 16px;
+      overflow: hidden;
       background:
-        radial-gradient(ellipse at 20% 0%, rgba(42,90,143,0.45) 0%, transparent 55%),
-        radial-gradient(ellipse at 80% 100%, rgba(139,105,20,0.18) 0%, transparent 50%),
+        radial-gradient(ellipse at 20% 0%, rgba(42,90,143,0.4) 0%, transparent 55%),
+        radial-gradient(ellipse at 80% 100%, rgba(139,105,20,0.14) 0%, transparent 50%),
         linear-gradient(165deg, #121a24 0%, #1a2838 45%, #152033 100%);
     }
     #loginScreen.show { display: flex !important; }
-    .login-card {
+
+    /* Soft vignette only — no harsh grid */
+    #loginScreen::before {
+      content: "";
+      position: absolute; inset: 0; pointer-events: none; z-index: 0;
+      background: radial-gradient(ellipse 65% 55% at 50% 45%, transparent 30%, rgba(0,0,0,0.35) 100%);
+    }
+    #loginScreen::after {
+      content: none;
+    }
+
+    .login-stage {
+      position: relative; z-index: 1;
+      display: flex; flex-direction: column; align-items: center;
       width: min(400px, 100%);
+      gap: 16px;
+    }
+
+    .login-top-brand {
+      text-align: center;
+      width: 100%;
+    }
+    .login-top-brand .brand-line {
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+      margin-bottom: 6px;
+    }
+    .login-top-brand .brand-line::before,
+    .login-top-brand .brand-line::after {
+      content: "";
+      height: 1px; width: 36px;
+      background: linear-gradient(90deg, transparent, rgba(196,163,90,0.65), transparent);
+    }
+    .login-top-brand .brand-kicker {
+      font-size: 0.7rem; font-weight: 700; letter-spacing: 0.2em;
+      text-transform: uppercase; color: rgba(196,163,90,0.9);
+    }
+    .login-top-brand .brand-sub {
+      font-size: 0.78rem; color: rgba(255,255,255,0.45);
+      letter-spacing: 0.03em; font-weight: 500;
+    }
+
+    .login-card-wrap {
+      position: relative;
+      width: 100%;
+    }
+    .login-card-wrap::before {
+      content: none; /* no glow — keep card as-is */
+    }
+
+    /* === LOGIN WINDOW (restored) === */
+    .login-card {
+      width: 100%;
       background: rgba(13, 24, 38, 0.92);
       border: 1px solid rgba(255,255,255,0.1);
       border-radius: 12px;
@@ -367,10 +418,22 @@
     #loginScreen .view-display-link:hover {
       color: #fff; border-bottom-color: #fff;
     }
+
     .login-footer {
-      margin-top: 16px; text-align: center;
-      font-size: 0.7rem; color: rgba(255,255,255,0.35); letter-spacing: 0.04em;
+      text-align: center;
+      font-size: 0.7rem; color: rgba(255,255,255,0.38);
+      letter-spacing: 0.04em; line-height: 1.45;
+      max-width: 360px;
     }
+    .login-footer strong {
+      color: rgba(255,255,255,0.55); font-weight: 600;
+    }
+
+    .login-base-pills {
+      display: none; /* hide — was extra chrome around the card */
+    }
+    .login-base-pill { display: none; }
+
 
     .duty-mode-row {
       display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px;
@@ -746,32 +809,51 @@
 
   <!-- LOGIN (editors only) -->
   <div id="loginScreen">
-    <div class="login-card">
-      <div class="login-card-header">
-        <h2>HELIBASE STATUS BOARD</h2>
-        <div class="tagline">Castle &amp; Mariposa · Live wall board</div>
+    <div class="login-stage">
+      <div class="login-top-brand">
+        <div class="brand-line">
+          <span class="brand-kicker">Helibase Status Board</span>
+        </div>
+        <div class="brand-sub">Sign in to edit · Display links need no login</div>
       </div>
-      <div class="login-card-body">
-        <div class="login-field-label">Helibase</div>
-        <select id="baseSelect">
-          <option value="castle">Castle Helibase</option>
-          <option value="mariposa">Mariposa Helibase</option>
-        </select>
-        <div class="login-field-label">Email</div>
-        <input type="email" id="emailInput" placeholder="you@agency.gov" autocomplete="username" />
-        <div class="login-field-label">Password</div>
-        <input type="password" id="passInput" placeholder="Password" autocomplete="current-password" />
-        <button type="button" class="login-btn" onclick="doLogin()">Sign In to Edit</button>
-        <div class="err" id="loginErr"></div>
-        <div class="login-divider"></div>
-        <div class="login-tv-block">
-          <p class="hint">Wall TVs — no login. Bookmark the display link for that base.</p>
-          <a class="view-display-link" href="?base=castle&view=display">Castle Display</a>
-          <a class="view-display-link" href="?base=mariposa&view=display">Mariposa Display</a>
+
+      <div class="login-card-wrap">
+        <div class="login-card">
+          <div class="login-card-header">
+            <h2>HELIBASE STATUS BOARD</h2>
+            <div class="tagline">Castle &amp; Mariposa · Live wall board</div>
+          </div>
+          <div class="login-card-body">
+            <div class="login-field-label">Helibase</div>
+            <select id="baseSelect">
+              <option value="castle">Castle Helibase</option>
+              <option value="mariposa">Mariposa Helibase</option>
+            </select>
+            <div class="login-field-label">Email</div>
+            <input type="email" id="emailInput" placeholder="you@agency.gov" autocomplete="username" />
+            <div class="login-field-label">Password</div>
+            <input type="password" id="passInput" placeholder="Password" autocomplete="current-password" />
+            <button type="button" class="login-btn" onclick="doLogin()">Sign In to Edit</button>
+            <div class="err" id="loginErr"></div>
+            <div class="login-divider"></div>
+            <div class="login-tv-block">
+              <p class="hint">Wall TVs — no login. Bookmark the display link for that base.</p>
+              <a class="view-display-link" href="?base=castle&view=display">Castle Display</a>
+              <a class="view-display-link" href="?base=mariposa&view=display">Mariposa Display</a>
+            </div>
+          </div>
         </div>
       </div>
+
+      <div class="login-base-pills">
+        <span class="login-base-pill">Castle</span>
+        <span class="login-base-pill">Mariposa</span>
+      </div>
+
+      <div class="login-footer">
+        Status board · Not for dispatch · Paper board remains backup
+      </div>
     </div>
-    <div class="login-footer">Status board · Not for dispatch · Paper board remains backup</div>
   </div>
 
   <div class="app-wrap" id="appWrap">
