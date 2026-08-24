@@ -3,6 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1a3a5c" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Helibase Board" />
+  <meta name="description" content="Castle and Mariposa helibase live status board" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
   <title>Helibase Status Board</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
@@ -275,7 +284,7 @@
         radial-gradient(ellipse at 80% 100%, rgba(139,105,20,0.18) 0%, transparent 50%),
         linear-gradient(165deg, #121a24 0%, #1a2838 45%, #152033 100%);
     }
-    #loginScreen.show { display: flex; }
+    #loginScreen.show { display: flex !important; }
     .login-card {
       width: min(400px, 100%);
       background: rgba(13, 24, 38, 0.92);
@@ -2572,6 +2581,14 @@
 
     initAuthGate();
 
-  </script>
+  
+    // PWA service worker (shell cache only — APIs stay live)
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW register", e));
+      });
+    }
+
+</script>
 </body>
 </html>
