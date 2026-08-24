@@ -854,6 +854,7 @@
       <div class="login-footer">
         Status board · Not for dispatch · Paper board remains backup
       </div>
+      <div class="login-footer" id="pwaAssetStatus" style="margin-top:4px;text-transform:none;letter-spacing:0.03em;"></div>
     </div>
   </div>
 
@@ -1749,6 +1750,14 @@
         flashStatus("Saved · synced");
         const hint = document.getElementById("autosaveHint");
         if (hint) hint.textContent = "Saved · auto-saves 30s after you stop typing · Ctrl/Cmd+S";
+        // AABs are shared unit-wide (Castle + Mariposa stay in sync)
+        try {
+          await sb.from("board_state").update({
+            aab1: payload.aab1,
+            aab2: payload.aab2,
+            aab3: payload.aab3
+          }).in("base_id", ["castle", "mariposa"]);
+        } catch (e) { console.warn("AAB shared sync", e); }
         await maybeArchiveIncident(payload.incident);
         await writeAudit("save", payload.incident ? ("incident: " + payload.incident) : "board update");
       }
@@ -2664,11 +2673,51 @@
     initAuthGate();
 
   
-    // PWA service worker (shell cache only — APIs stay live)
+    // PWA: confirm icons/manifest are live, then register service worker
+    async function confirmPwaAssets() {
+      const assets = [
+        "manifest.webmanifest",
+        "apple-touch-icon.png",
+        "icon-192.png",
+        "icon-512.png",
+        "icon-512-maskable.png",
+        "sw.js"
+      ];
+      const results = [];
+      for (const path of assets) {
+        try {
+          const res = await fetch(path, { method: "GET", cache: "no-cache" });
+          results.push({ path: path, ok: res.ok, status: res.status });
+        } catch (e) {
+          results.push({ path: path, ok: false, status: 0 });
+        }
+      }
+      const missing = results.filter(r => !r.ok);
+      if (missing.length) {
+        console.warn("PWA assets missing (upload to repo root):", missing.map(m => m.path + " (" + m.status + ")"));
+      } else {
+        console.info("PWA assets OK:", results.map(r => r.path).join(", "));
+      }
+      const el = document.getElementById("pwaAssetStatus");
+      if (el) {
+        if (missing.length) {
+          el.textContent = "Home-screen icon files missing on server — upload icons + manifest to repo root";
+          el.style.color = "#ff8a80";
+        } else {
+          el.textContent = "App icons ready · Add to Home Screen for the board icon";
+          el.style.color = "rgba(255,255,255,0.4)";
+        }
+      }
+      return missing.length === 0;
+    }
+
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
+        confirmPwaAssets().catch(() => {});
         navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW register", e));
       });
+    } else {
+      window.addEventListener("load", () => { confirmPwaAssets().catch(() => {}); });
     }
 
 </script>
