@@ -420,6 +420,16 @@
       color: #fff; border-bottom-color: #fff;
     }
 
+    .pwa-status {
+      margin-top: 12px;
+      font-size: 0.72rem;
+      line-height: 1.35;
+      color: rgba(255,255,255,0.55);
+      text-align: center;
+      min-height: 1.2em;
+    }
+    .pwa-status.ok { color: #81c784; }
+    .pwa-status.bad { color: #ff8a80; }
     .login-footer {
       text-align: center;
       font-size: 0.7rem; color: rgba(255,255,255,0.38);
@@ -841,6 +851,7 @@
               <p class="hint">Wall TVs — no login. Bookmark the display link for that base.</p>
               <a class="view-display-link" href="?base=castle&view=display">Castle Display</a>
               <a class="view-display-link" href="?base=mariposa&view=display">Mariposa Display</a>
+              <div id="pwaAssetStatus" class="pwa-status">Checking app icons…</div>
             </div>
           </div>
         </div>
@@ -854,7 +865,7 @@
       <div class="login-footer">
         Status board · Not for dispatch · Paper board remains backup
       </div>
-      <div class="login-footer" id="pwaAssetStatus" style="margin-top:4px;text-transform:none;letter-spacing:0.03em;"></div>
+
     </div>
   </div>
 
@@ -2033,8 +2044,8 @@
 
 
     function formatTimeInput(el) {
-      // Keep only digits, max 4 (HHMM)
-      let digits = (el.value || "").replace(/\D/g, "").slice(0, 4);
+      // Digits only → auto-insert colon for 24h HH:MM (same for Time↑, Time↓, Cutoff)
+      let digits = String(el.value || "").replace(/\D/g, "").slice(0, 4);
       if (digits.length >= 3) {
         el.value = digits.slice(0, 2) + ":" + digits.slice(2);
       } else {
@@ -2045,22 +2056,37 @@
     function attachTimeFormatter(id) {
       const el = document.getElementById(id);
       if (!el) return;
-      el.addEventListener("input", () => {
+      // Avoid double-binding if startApp runs twice
+      if (el.dataset.timeFmt === "1") return;
+      el.dataset.timeFmt = "1";
+      el.setAttribute("inputmode", "numeric");
+      el.setAttribute("maxlength", "5");
+      el.setAttribute("autocomplete", "off");
+
+      const apply = () => {
         const start = el.selectionStart;
         const oldLen = el.value.length;
         formatTimeInput(el);
-        // simple caret handling after insert
         const newLen = el.value.length;
         if (typeof start === "number") {
           const adj = newLen - oldLen;
-          const pos = Math.max(0, start + adj);
+          const pos = Math.min(newLen, Math.max(0, start + adj));
           try { el.setSelectionRange(pos, pos); } catch (e) {}
         }
-      });
+      };
+
+      el.addEventListener("input", apply);
+      el.addEventListener("keyup", apply);
+      el.addEventListener("change", apply);
+      el.addEventListener("paste", () => setTimeout(apply, 0));
       el.addEventListener("blur", () => {
-        // normalize to HH:MM if 3-4 digits entered
-        let digits = (el.value || "").replace(/\D/g, "").slice(0, 4);
-        if (digits.length === 3) digits = "0" + digits; // e.g. 918 -> 09:18
+        let digits = String(el.value || "").replace(/\D/g, "").slice(0, 4);
+        if (digits.length === 1 || digits.length === 2) {
+          // leave partial entry; optional zero-pad hours only on full-ish entry
+          el.value = digits;
+          return;
+        }
+        if (digits.length === 3) digits = "0" + digits;
         if (digits.length === 4) {
           el.value = digits.slice(0, 2) + ":" + digits.slice(2);
         }
@@ -2675,6 +2701,11 @@
   
     // PWA: confirm icons/manifest are live, then register service worker
     async function confirmPwaAssets() {
+      const el = document.getElementById("pwaAssetStatus");
+      if (el) {
+        el.className = "pwa-status";
+        el.textContent = "Checking app icons…";
+      }
       const assets = [
         "manifest.webmanifest",
         "apple-touch-icon.png",
@@ -2693,32 +2724,39 @@
         }
       }
       const missing = results.filter(r => !r.ok);
-      if (missing.length) {
-        console.warn("PWA assets missing (upload to repo root):", missing.map(m => m.path + " (" + m.status + ")"));
-      } else {
-        console.info("PWA assets OK:", results.map(r => r.path).join(", "));
-      }
-      const el = document.getElementById("pwaAssetStatus");
       if (el) {
         if (missing.length) {
-          el.textContent = "Home-screen icon files missing on server — upload icons + manifest to repo root";
-          el.style.color = "#ff8a80";
+          el.className = "pwa-status bad";
+          el.textContent = "Home-screen icons not on server yet — upload: " + missing.map(function(m){ return m.path; }).join(", ");
         } else {
-          el.textContent = "App icons ready · Add to Home Screen for the board icon";
-          el.style.color = "rgba(255,255,255,0.4)";
+          el.className = "pwa-status ok";
+          el.textContent = "App icons ready — use Add to Home Screen for the board icon";
         }
       }
+      if (missing.length) console.warn("PWA assets missing:", missing);
+      else console.info("PWA assets OK");
       return missing.length === 0;
     }
 
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        confirmPwaAssets().catch(() => {});
-        navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW register", e));
+    function startPwa() {
+      confirmPwaAssets().catch(function () {
+        const el = document.getElementById("pwaAssetStatus");
+        if (el) {
+          el.className = "pwa-status bad";
+          el.textContent = "Could not check app icons (network error)";
+        }
       });
-    } else {
-      window.addEventListener("load", () => { confirmPwaAssets().catch(() => {}); });
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("./sw.js").catch(function (e) {
+          console.warn("SW register", e);
+        });
+      }
     }
+
+    // Run now if page already loaded; otherwise on load (fixes race)
+    if (document.readyState === "complete") startPwa();
+    else window.addEventListener("load", startPwa);
+
 
 </script>
 </body>
