@@ -602,14 +602,16 @@
       color: #2a2a2a; letter-spacing: 0.06em;
     }
 
-    /* Small corner controls — never cover Load Calc or board content */
+    /* Small corner controls — bottom-right (away from Load Calc on the left) */
     #exitDisplayBtn,
     #kioskBtn {
       display: none;
       position: fixed;
       z-index: 10000;
-      top: 8px;
-      right: 8px;
+      top: auto;
+      left: auto;
+      bottom: 10px;
+      right: 10px;
       background: rgba(20, 40, 70, 0.72);
       color: rgba(255,255,255,0.9);
       border: 1px solid rgba(255,255,255,0.25);
@@ -631,10 +633,10 @@
       opacity: 1;
       background: rgba(30, 77, 140, 0.95);
     }
-    /* Stack: Fullscreen on top-right, Exit Display just left of it when both show */
-    #kioskBtn { right: 8px; }
-    #exitDisplayBtn { right: 108px; }
-    body.display-mode #exitDisplayBtn { display: none; } /* only when editor entered display; pure TV stays hidden via JS */
+    /* Fullscreen / Exit FS: bottom-right. Exit Display sits just to its left when both show */
+    #kioskBtn { right: 10px; bottom: 10px; }
+    #exitDisplayBtn { right: 100px; bottom: 10px; }
+    body.display-mode #exitDisplayBtn { display: none; }
     body.display-mode.editor-display #exitDisplayBtn { display: block; }
     body.display-mode #kioskBtn { display: block; }
     body.display-mode.kiosk-fs #kioskBtn { opacity: 0.35; }
