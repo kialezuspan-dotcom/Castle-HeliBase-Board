@@ -945,15 +945,13 @@
           <div class="cell">
             <div class="tape-label">Time ↑</div>
             <div class="paper">
-              <input type="text" id="timeUp" placeholder="HH:MM" inputmode="numeric"
-                     maxlength="5" autocomplete="off" title="24-hour HH:MM" />
+              <input type="tel" id="timeUp" placeholder="HH:MM" inputmode="numeric" maxlength="5" autocomplete="off" title="24-hour HH:MM" oninput="window.formatTimeField && window.formatTimeField(this)" onblur="window.formatTimeField && window.formatTimeField(this)" />
             </div>
           </div>
           <div class="cell">
             <div class="tape-label">Time ↓</div>
             <div class="paper">
-              <input type="text" id="timeDown" placeholder="HH:MM" inputmode="numeric"
-                     maxlength="5" autocomplete="off" title="24-hour HH:MM" />
+              <input type="tel" id="timeDown" placeholder="HH:MM" inputmode="numeric" maxlength="5" autocomplete="off" title="24-hour HH:MM" oninput="window.formatTimeField && window.formatTimeField(this)" onblur="window.formatTimeField && window.formatTimeField(this)" />
             </div>
           </div>
           <div class="cell">
@@ -976,8 +974,7 @@
           <div class="cell">
             <div class="tape-label">Cutoff</div>
             <div class="paper">
-              <input type="text" id="cutoff" placeholder="HH:MM" inputmode="numeric"
-                     maxlength="5" autocomplete="off" title="24-hour HH:MM" />
+              <input type="tel" id="cutoff" placeholder="HH:MM" inputmode="numeric" maxlength="5" autocomplete="off" title="24-hour HH:MM" oninput="window.formatTimeField && window.formatTimeField(this)" onblur="window.formatTimeField && window.formatTimeField(this)" />
             </div>
           </div>
         </div>
@@ -2042,68 +2039,59 @@
     }
 
 
+    // Global so inline oninput/onblur always work (iPad Safari-friendly)
+    window.formatTimeField = function (el) {
+      if (!el) return;
+      var raw = String(el.value || "");
+      var digits = raw.replace(/\D/g, "").slice(0, 4);
+      var next;
+      if (digits.length <= 2) {
+        next = digits; // do NOT force trailing colon while typing (allows backspace)
+      } else {
+        next = digits.slice(0, 2) + ":" + digits.slice(2);
+      }
+      if (el.value !== next) {
+        el.value = next;
+      }
+    };
+
     function formatTimeInput(el) {
-      // Digits only → auto-insert colon as HH:MM (Time↑, Time↓, Cutoff)
-      let digits = String(el.value || "").replace(/\D/g, "").slice(0, 4);
-      let next = "";
-      if (digits.length === 0) next = "";
-      else if (digits.length <= 2) next = digits.length === 2 ? (digits + ":") : digits;
-      else next = digits.slice(0, 2) + ":" + digits.slice(2);
-      if (el.value !== next) el.value = next;
+      window.formatTimeField(el);
     }
 
     function attachTimeFormatter(id) {
-      const el = document.getElementById(id);
+      var el = document.getElementById(id);
       if (!el) return;
       if (el.dataset.timeFmt === "1") return;
       el.dataset.timeFmt = "1";
+      el.setAttribute("type", "tel");
       el.setAttribute("inputmode", "numeric");
       el.setAttribute("maxlength", "5");
-      el.setAttribute("autocomplete", "off");
       el.removeAttribute("pattern");
 
-      let busy = false;
-      const apply = function () {
-        if (busy) return;
-        busy = true;
-        try {
-          formatTimeInput(el);
-          try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) {}
-        } finally {
-          busy = false;
-        }
-      };
+      function apply() { window.formatTimeField(el); }
 
       el.addEventListener("input", apply);
       el.addEventListener("keyup", apply);
       el.addEventListener("change", apply);
-      el.addEventListener("blur", apply);
-      el.addEventListener("paste", function () { setTimeout(apply, 0); });
-      el.addEventListener("beforeinput", function (e) {
-        // Allow digits and editing; block other characters (colon is auto)
-        if (e.inputType && e.inputType.indexOf("delete") === 0) return;
-        if (e.data && !/^\d+$/.test(e.data)) {
-          e.preventDefault();
+      el.addEventListener("blur", function () {
+        // On blur, if 3–4 digits, force HH:MM (pad 3-digit like 930 → 09:30)
+        var digits = String(el.value || "").replace(/\D/g, "").slice(0, 4);
+        if (digits.length === 3) digits = "0" + digits;
+        if (digits.length === 4) {
+          el.value = digits.slice(0, 2) + ":" + digits.slice(2);
         }
       });
+      el.addEventListener("paste", function () { setTimeout(apply, 0); });
     }
 
-    /** Safety net: format any of the three time fields even if per-field bind failed */
     function bindTimeFieldsDelegated() {
       if (document.body.dataset.timeDelegate === "1") return;
       document.body.dataset.timeDelegate = "1";
-      const ids = { timeUp: 1, timeDown: 1, cutoff: 1 };
+      var ids = { timeUp: 1, timeDown: 1, cutoff: 1 };
       document.body.addEventListener("input", function (e) {
-        const t = e.target;
-        if (!t || !t.id || !ids[t.id]) return;
-        if (t.dataset._tfBusy === "1") return;
-        t.dataset._tfBusy = "1";
-        try {
-          formatTimeInput(t);
-          try { t.setSelectionRange(t.value.length, t.value.length); } catch (err) {}
-        } finally {
-          t.dataset._tfBusy = "0";
-        }
+        var t = e.target;
+        if (t && t.id && ids[t.id]) window.formatTimeField(t);
       }, true);
     }
 
@@ -2489,16 +2477,27 @@
     async function maybeArchiveIncident(newIncident) {
       const prev = (lastIncidentName || "").trim();
       const next = (newIncident || "").trim();
-      // Archive previous name when it changes to something different and previous was non-empty
-      if (prev && next && prev !== next) {
+      // Archive when previous name was set and the name changed (including cleared)
+      if (prev && prev !== next) {
         try {
-          await sb.from("incident_log").insert({
+          const row = {
             base_id: currentBaseId,
             incident: prev,
             snapshot: snapshotFromForm(),
+            created_at: new Date().toISOString(),
             created_by: currentUser ? (currentUser.email || currentUser.id) : null
-          });
-        } catch (e) { console.warn("incident_log", e); }
+          };
+          const { error } = await sb.from("incident_log").insert(row);
+          if (error) {
+            console.error("incident_log insert", error);
+            flashStatus("Incident archive failed: " + (error.message || "check SQL columns"));
+          } else {
+            console.info("incident archived", prev);
+          }
+        } catch (e) {
+          console.warn("incident_log", e);
+          flashStatus("Incident archive error");
+        }
       }
       lastIncidentName = next;
     }
@@ -2540,7 +2539,7 @@
         return;
       }
       if (!data || !data.length) {
-        body.innerHTML = '<div class="history-empty">No archived incidents yet. Change the incident name and Save to create a snapshot.</div>';
+        body.innerHTML = '<div class="history-empty">No archived incidents yet. Enter an incident name, Save, then change the name and Save again to archive the previous one.</div>';
         return;
       }
       let html = '<table><thead><tr><th>When</th><th>Incident</th><th>By</th><th>Key fields</th></tr></thead><tbody>';
