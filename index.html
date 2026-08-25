@@ -1069,7 +1069,7 @@
       <span>Incident Log / History</span>
       <button class="btn-small" onclick="toggleIncidentHistory()">Close</button>
     </h3>
-    <p class="muted" style="margin-bottom:8px;">Snapshots are saved when the incident name changes on Save.</p>
+    <p class="muted" style="margin-bottom:8px;">Snapshots are saved when you Save Board with an incident name (includes time ↑ / ↓ and crew fields).</p>
     <div id="incidentHistoryBody" class="history-empty">Loading…</div>
   </div>
 
@@ -1141,6 +1141,7 @@
     let conflictPending = false;
     let loadCalcBy = "";
     let loadCalcAt = null;
+    let ignoreRealtimeUntil = 0; // ignore own-save echo so fields are not wiped
 
     // 6-day duty thresholds: [oneDayOff, twoDaysOff]
     const DUTY_RULES = {
@@ -1704,16 +1705,29 @@
         loadCalcAt = null;
       }
 
+      // Format time fields right before read so partial entry is normalized
+      try {
+        ["timeUp", "timeDown", "cutoff"].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el && window.formatTimeField) window.formatTimeField(el);
+        });
+      } catch (e) {}
+
+      const incidentVal = (document.getElementById("incident").value || "").trim();
+      const timeUpVal = (document.getElementById("timeUp").value || "").trim();
+      const timeDownVal = (document.getElementById("timeDown").value || "").trim();
+      const cutoffVal = (document.getElementById("cutoff").value || "").trim();
+
       const payload = {
         base_id: currentBaseId,
         aab1: document.getElementById("aab1").value,
         aab2: document.getElementById("aab2").value,
         aab3: document.getElementById("aab3").value,
-        incident: document.getElementById("incident").value,
+        incident: incidentVal,
         hobbs: document.getElementById("hobbs").value,
-        time_up: document.getElementById("timeUp").value,
-        time_down: document.getElementById("timeDown").value,
-        cutoff: document.getElementById("cutoff").value,
+        time_up: timeUpVal,
+        time_down: timeDownVal,
+        cutoff: cutoffVal,
         pic: document.getElementById("pic").value,
         sic: document.getElementById("sic").value,
         mech: document.getElementById("mech").value,
@@ -1745,6 +1759,8 @@
         lastServerUpdatedAt = payload.updated_at;
         lastSavedBy = payload.last_saved_by;
         boardFromCache = false;
+        // Ignore realtime echo of our own save / AAB sync for a few seconds
+        ignoreRealtimeUntil = Date.now() + 4000;
         hideConflict();
         refreshLoadCalcMetaUI();
         refreshSavedStamp();
@@ -1754,7 +1770,13 @@
           load_calc_at: payload.load_calc_at,
           load_calc_posted: payload.load_calc_posted
         }));
-        flashStatus("Saved · synced");
+        var confirmBits = [];
+        if (incidentVal) confirmBits.push("Incident: " + incidentVal);
+        if (timeUpVal) confirmBits.push("Up " + timeUpVal);
+        if (timeDownVal) confirmBits.push("Down " + timeDownVal);
+        flashStatus(confirmBits.length
+          ? ("Saved · " + confirmBits.join(" · "))
+          : "Saved · synced");
         const hint = document.getElementById("autosaveHint");
         if (hint) hint.textContent = "Saved · auto-saves 30s after you stop typing · Ctrl/Cmd+S";
         // AABs are shared unit-wide (Castle + Mariposa stay in sync)
@@ -1823,6 +1845,11 @@
           if (payload.new) {
             if (payload.new.base_id && payload.new.base_id !== currentBaseId) return;
             const d = payload.new;
+            // Ignore echo from our own recent save so incident / times are not wiped
+            if (Date.now() < ignoreRealtimeUntil) {
+              lastServerUpdatedAt = d.updated_at || lastServerUpdatedAt;
+              return;
+            }
             // If we have local unsaved edits, don't clobber — show conflict
             if (dirty && !isDisplayOnly && currentUser) {
               lastServerUpdatedAt = d.updated_at || lastServerUpdatedAt;
@@ -1834,6 +1861,7 @@
             document.getElementById("aab2").value = d.aab2 || "";
             document.getElementById("aab3").value = d.aab3 || "";
             document.getElementById("incident").value = d.incident || "";
+            lastIncidentName = d.incident || "";
             document.getElementById("hobbs").value = d.hobbs || "";
             document.getElementById("timeUp").value = d.time_up || "";
             document.getElementById("timeDown").value = d.time_down || "";
@@ -2474,30 +2502,43 @@
       } catch (e) { console.warn("audit", e); }
     }
 
+    async function insertIncidentSnapshot(name) {
+      const n = (name || "").trim();
+      if (!n) return false;
+      try {
+        const row = {
+          base_id: currentBaseId,
+          incident: n,
+          snapshot: snapshotFromForm(),
+          created_at: new Date().toISOString(),
+          created_by: currentUser ? (currentUser.email || currentUser.id) : null
+        };
+        const { error } = await sb.from("incident_log").insert(row);
+        if (error) {
+          console.error("incident_log insert", error);
+          flashStatus("Incident archive failed: " + (error.message || "check SQL columns"));
+          return false;
+        }
+        console.info("incident archived", n);
+        return true;
+      } catch (e) {
+        console.warn("incident_log", e);
+        flashStatus("Incident archive error");
+        return false;
+      }
+    }
+
     async function maybeArchiveIncident(newIncident) {
       const prev = (lastIncidentName || "").trim();
       const next = (newIncident || "").trim();
-      // Archive when previous name was set and the name changed (including cleared)
+      // 1) If the name changed and there was a previous name, archive the old one
       if (prev && prev !== next) {
-        try {
-          const row = {
-            base_id: currentBaseId,
-            incident: prev,
-            snapshot: snapshotFromForm(),
-            created_at: new Date().toISOString(),
-            created_by: currentUser ? (currentUser.email || currentUser.id) : null
-          };
-          const { error } = await sb.from("incident_log").insert(row);
-          if (error) {
-            console.error("incident_log insert", error);
-            flashStatus("Incident archive failed: " + (error.message || "check SQL columns"));
-          } else {
-            console.info("incident archived", prev);
-          }
-        } catch (e) {
-          console.warn("incident_log", e);
-          flashStatus("Incident archive error");
-        }
+        await insertIncidentSnapshot(prev);
+      }
+      // 2) If there is a current incident name on this Save, also snapshot it
+      //    (so history shows up without requiring a second name change)
+      if (next) {
+        await insertIncidentSnapshot(next);
       }
       lastIncidentName = next;
     }
@@ -2539,7 +2580,7 @@
         return;
       }
       if (!data || !data.length) {
-        body.innerHTML = '<div class="history-empty">No archived incidents yet. Enter an incident name, Save, then change the name and Save again to archive the previous one.</div>';
+        body.innerHTML = '<div class="history-empty">No archived incidents yet. Type an incident name, set times if needed, then Save Board — a snapshot is written to history.</div>';
         return;
       }
       let html = '<table><thead><tr><th>When</th><th>Incident</th><th>By</th><th>Key fields</th></tr></thead><tbody>';
