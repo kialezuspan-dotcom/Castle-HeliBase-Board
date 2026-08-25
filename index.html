@@ -478,15 +478,68 @@
     body.tv-mode .hours-slots input { font-size: 1.6rem; }
     body.tv-mode .tape-label { font-size: 0.85rem; }
 
-    /* ===== DISPLAY MODE (clean presentation, no edit chrome) ===== */
+    /* ===== DISPLAY MODE (fill any TV / monitor, no edit chrome) ===== */
     body.display-mode {
-      padding: 8px;
-      background: #1a1a1a;
+      padding: 0;
+      margin: 0;
+      background: #0d0d0d;
+      overflow: hidden;
+      height: 100dvh;
+      width: 100vw;
+      max-height: 100dvh;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+    body.display-mode .app-wrap {
+      max-width: none;
+      width: 100%;
+      height: 100%;
+      max-height: 100dvh;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      padding: 6px;
+      box-sizing: border-box;
     }
     body.display-mode .outer-frame {
-      box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+      box-shadow: none;
       width: 100%;
-      max-width: 1600px;
+      height: 100%;
+      max-width: none;
+      max-height: 100%;
+      display: flex;
+      flex-wrap: nowrap;
+      overflow: hidden;
+      border-radius: 2px;
+    }
+    body.display-mode .left-panel {
+      flex: 0 0 clamp(240px, 26vw, 360px);
+      max-width: 360px;
+      min-width: 220px;
+      max-height: 100%;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding: 10px 12px 12px;
+      gap: 10px;
+    }
+    body.display-mode .right-panel {
+      flex: 1 1 auto;
+      min-width: 0;
+      max-height: 100%;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding: 8px 10px 12px;
+    }
+    body.display-mode .section { margin-bottom: 7px; gap: 6px; }
+    body.display-mode .hours-row { margin-top: 2px; }
+    body.display-mode .notes-area { min-height: 0; flex: 1 1 auto; }
+    body.display-mode .notes-area textarea {
+      min-height: 4rem !important;
+    }
+    body.display-mode .loadcalc-block {
+      margin-top: 4px;
+      padding-bottom: 4px;
     }
     body.display-mode input,
     body.display-mode select,
@@ -549,14 +602,44 @@
       color: #2a2a2a; letter-spacing: 0.06em;
     }
 
-    #exitDisplayBtn {
+    /* Small corner controls — never cover Load Calc or board content */
+    #exitDisplayBtn,
+    #kioskBtn {
       display: none;
-      position: fixed; bottom: 16px; right: 16px; z-index: 10000;
-      background: #1e4d8c; color: #fff; border: none; border-radius: 6px;
-      padding: 12px 18px; font-size: 0.95rem; font-weight: 700;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.35); cursor: pointer;
+      position: fixed;
+      z-index: 10000;
+      top: 8px;
+      right: 8px;
+      background: rgba(20, 40, 70, 0.72);
+      color: rgba(255,255,255,0.9);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 4px;
+      padding: 5px 10px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+      cursor: pointer;
+      opacity: 0.45;
+      transition: opacity 0.15s, background 0.15s;
+      line-height: 1.2;
     }
-    body.display-mode #exitDisplayBtn { display: block; }
+    #exitDisplayBtn:hover,
+    #kioskBtn:hover,
+    #exitDisplayBtn:focus,
+    #kioskBtn:focus {
+      opacity: 1;
+      background: rgba(30, 77, 140, 0.95);
+    }
+    /* Stack: Fullscreen on top-right, Exit Display just left of it when both show */
+    #kioskBtn { right: 8px; }
+    #exitDisplayBtn { right: 108px; }
+    body.display-mode #exitDisplayBtn { display: none; } /* only when editor entered display; pure TV stays hidden via JS */
+    body.display-mode.editor-display #exitDisplayBtn { display: block; }
+    body.display-mode #kioskBtn { display: block; }
+    body.display-mode.kiosk-fs #kioskBtn { opacity: 0.35; }
+    body.display-mode.kiosk-fs #kioskBtn:hover,
+    body.display-mode.kiosk-fs #kioskBtn:focus { opacity: 1; }
     body.display-mode #controls { display: none !important; }
 
     body.display-mode input::placeholder,
@@ -722,24 +805,34 @@
     }
 
 
-    #kioskBtn {
-      display: none;
-      position: fixed; bottom: 16px; left: 16px; z-index: 10000;
-      background: #1e4d8c; color: #fff; border: none; border-radius: 6px;
-      padding: 12px 18px; font-size: 0.95rem; font-weight: 700;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.35); cursor: pointer;
-    }
-    body.display-mode #kioskBtn { display: block; }
-    body.display-mode.kiosk-fs #kioskBtn {
-      opacity: 0.35;
-    }
-    body.display-mode.kiosk-fs #kioskBtn:hover,
-    body.display-mode.kiosk-fs #kioskBtn:focus {
-      opacity: 1;
-    }
     /* Keep standard board cells always visible (incident, times, etc.) */
     body.display-mode .cell .paper {
-      min-height: 40px;
+      min-height: 36px;
+    }
+    /* Tighter display typography so a 55–75" TV fits the full board */
+    body.display-mode .board-title {
+      margin: -8px -10px 6px;
+      padding: 8px 10px 6px;
+    }
+    body.display-mode .board-saved {
+      margin: -4px -10px 6px;
+      padding: 0 10px 6px;
+      font-size: 0.68rem;
+    }
+    body.display-mode .duty-rule {
+      font-size: 0.85rem;
+      padding: 8px 10px;
+    }
+    body.display-mode .section-title {
+      margin-bottom: 4px;
+      font-size: 0.72rem;
+    }
+    body.display-mode .contact-card {
+      padding: 8px 10px;
+    }
+    body.display-mode .temp-paper {
+      min-height: 72px;
+      padding: 4px;
     }
 
 
@@ -1082,7 +1175,7 @@
     <div id="auditLogBody" class="history-empty">Loading…</div>
   </div>
 
-  <button type="button" id="exitDisplayBtn" onclick="exitDisplayMode()">Exit Display Mode</button>
+  <button type="button" id="exitDisplayBtn" onclick="exitDisplayMode()">Exit Display</button>
   <button type="button" id="kioskBtn" onclick="toggleKioskFullscreen()">Fullscreen</button>
 
   <div class="status-bar" id="statusBar">
@@ -2167,22 +2260,23 @@
 
     function enterDisplayMode() {
       try { if (currentUser) saveBoard(); } catch (e) {}
-      document.body.classList.add("display-mode");
+      document.body.classList.add("display-mode", "editor-display");
       document.body.classList.remove("tv-mode");
       document.querySelectorAll("input, textarea").forEach(el => {
         if (!el.value && el.placeholder) el.setAttribute("data-ph", el.placeholder);
         el.placeholder = "";
       });
-      const exitBtn = document.getElementById("exitDisplayBtn");
-      if (exitBtn && currentUser) exitBtn.style.display = "block";
     }
     function exitDisplayMode() {
       if (isDisplayOnly) return; // pure ?view=display stays locked
-      document.body.classList.remove("display-mode");
+      document.body.classList.remove("display-mode", "editor-display", "kiosk-fs");
       document.querySelectorAll("input, textarea").forEach(el => {
         const ph = el.getAttribute("data-ph");
         if (ph) { el.placeholder = ph; el.removeAttribute("data-ph"); }
       });
+      try {
+        if (document.fullscreenElement) document.exitFullscreen().catch(function () {});
+      } catch (e) {}
     }
 
 
@@ -2825,9 +2919,8 @@
         if (!document.fullscreenElement) {
           document.documentElement.requestFullscreen().then(() => {
             document.body.classList.add("kiosk-fs");
-            if (btn) btn.textContent = "Exit Fullscreen";
+            if (btn) btn.textContent = "Exit FS";
           }).catch(() => {
-            // iOS / restricted browsers — fall back to display-mode only
             flashStatus("Fullscreen not allowed by this browser — use Display Mode");
           });
         } else {
@@ -2848,7 +2941,18 @@
         if (btn) btn.textContent = "Fullscreen";
       } else {
         document.body.classList.add("kiosk-fs");
-        if (btn) btn.textContent = "Exit Fullscreen";
+        if (btn) btn.textContent = "Exit FS";
+      }
+    });
+
+    // Keep display board filling the screen when the window or TV resizes
+    window.addEventListener("resize", function () {
+      if (!document.body.classList.contains("display-mode")) return;
+      // CSS uses 100dvh / flex — force a reflow so panels remeasure
+      const frame = document.querySelector(".outer-frame");
+      if (frame) {
+        frame.style.minHeight = "0";
+        void frame.offsetHeight;
       }
     });
 
