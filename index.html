@@ -1069,7 +1069,7 @@
       <span>Incident Log / History</span>
       <button class="btn-small" onclick="toggleIncidentHistory()">Close</button>
     </h3>
-    <p class="muted" style="margin-bottom:8px;">Flight legs are logged when you enter Time ↓ (prompts for landing Hobbs). Each row shows PIC/SIC, Up @ takeoff Hobbs, Down @ landing Hobbs.</p>
+    <p class="muted" style="margin-bottom:8px;">History records only after Time ↓ is entered and you complete the landing Hobbs prompt. Each row: PIC/SIC, Up @ takeoff Hobbs, Down @ landing Hobbs.</p>
     <div id="incidentHistoryBody" class="history-empty">Loading…</div>
   </div>
 
@@ -2536,7 +2536,8 @@
 
     /**
      * When Time ↓ is entered, prompt for the new (landing) Hobbs.
-     * Stores original Hobbs with up-time and new Hobbs with down-time in the next snapshot.
+     * History is written ONLY after a landing Hobbs number is entered.
+     * Cancel or blank = no history row.
      */
     function onTimeDownChange() {
       if (applyingRemote || isDisplayOnly) return;
@@ -2546,14 +2547,15 @@
       const val = (el.value || "").trim();
       if (!val) {
         lastTimeDownSeen = "";
+        hobbsAtDown = "";
         scheduleAutoSave();
         return;
       }
-      if (val === lastTimeDownSeen) {
+      // Already completed this same down time with a Hobbs entry
+      if (val === lastTimeDownSeen && hobbsAtDown) {
         scheduleAutoSave();
         return;
       }
-      lastTimeDownSeen = val;
 
       // Capture takeoff Hobbs if we somehow missed Time ↑
       const currentHobbs = (document.getElementById("hobbs").value || "").trim();
@@ -2561,25 +2563,34 @@
 
       const suggested = currentHobbs || "";
       const entered = window.prompt(
-        "Enter Hobbs at landing (Time ↓ " + val + ").\n" +
-        "Current board Hobbs: " + (suggested || "—") + "\n" +
-        "Leave blank to keep current.",
+        "Enter new Hobbs at landing (required to log this flight leg).\n" +
+        "Time ↓: " + val + "\n" +
+        "Current board Hobbs: " + (suggested || "—") + "\n\n" +
+        "Cancel = down time stays on the board, but history is NOT saved.",
         suggested
       );
-      if (entered !== null) {
-        const cleaned = String(entered).trim();
-        if (cleaned) {
-          hobbsAtDown = cleaned;
-          const hobbsEl = document.getElementById("hobbs");
-          if (hobbsEl) hobbsEl.value = cleaned;
-        } else {
-          hobbsAtDown = currentHobbs || "";
-        }
-      } else {
-        // Cancelled prompt — still record down time with whatever Hobbs is on the board
-        hobbsAtDown = currentHobbs || "";
+
+      // Cancelled — do not log history; allow prompt again on next blur/change
+      if (entered === null) {
+        flashStatus("History not saved — enter landing Hobbs to log this leg");
+        scheduleAutoSave();
+        return;
       }
-      // Immediately log this leg (incident, PIC/SIC, up@hobbs, down@hobbs)
+
+      const cleaned = String(entered).trim();
+      // Blank — do not log history
+      if (!cleaned) {
+        flashStatus("History not saved — landing Hobbs is required");
+        scheduleAutoSave();
+        return;
+      }
+
+      hobbsAtDown = cleaned;
+      lastTimeDownSeen = val;
+      const hobbsEl = document.getElementById("hobbs");
+      if (hobbsEl) hobbsEl.value = cleaned;
+
+      // Only now write Incident Log (requires Time ↓ + new Hobbs)
       if (currentUser && !isDisplayOnly) {
         archiveFlightLeg().catch(function (e) { console.warn(e); });
       }
@@ -2601,11 +2612,17 @@
     async function insertIncidentSnapshot(name) {
       const n = (name || "").trim();
       if (!n) return false;
+      // Hard rule: never write history without Time ↓ + landing Hobbs
+      const snap = snapshotFromForm();
+      if (!(snap.time_down || "").trim() || !(snap.hobbs_at_down || "").trim()) {
+        console.warn("skip history — missing time_down or hobbs_at_down");
+        return false;
+      }
       try {
         const row = {
           base_id: currentBaseId,
           incident: n,
-          snapshot: snapshotFromForm(),
+          snapshot: snap,
           created_at: new Date().toISOString(),
           created_by: currentUser ? (currentUser.email || currentUser.id) : null
         };
@@ -2625,20 +2642,24 @@
     }
 
     async function maybeArchiveIncident(newIncident) {
-      const prev = (lastIncidentName || "").trim();
-      const next = (newIncident || "").trim();
-      // Only archive when the incident name changes (avoids flooding log on 5s auto-save)
-      if (prev && prev !== next) {
-        await insertIncidentSnapshot(prev);
-      }
-      lastIncidentName = next;
+      // Incident history is NOT written on name change or Save.
+      // History only records when Time ↓ is entered AND a landing Hobbs is provided.
+      lastIncidentName = (newIncident || "").trim();
     }
 
-    /** Write a flight-leg row after Time ↓ + Hobbs are captured. */
+    /** Write a flight-leg row only after Time ↓ + landing Hobbs are both set. */
     async function archiveFlightLeg() {
+      const timeDown = (document.getElementById("timeDown").value || "").trim();
+      const landingHobbs = (hobbsAtDown || "").trim();
+      if (!timeDown || !landingHobbs) {
+        flashStatus("History not saved — need Time ↓ and landing Hobbs");
+        return;
+      }
       const name = (document.getElementById("incident").value || "").trim() || "Flight leg";
-      await insertIncidentSnapshot(name);
-      flashStatus("Flight leg saved to Incident Log");
+      const ok = await insertIncidentSnapshot(name);
+      if (ok) {
+        flashStatus("Flight leg saved · Down " + timeDown + " @ Hobbs " + landingHobbs);
+      }
     }
 
     function toggleIncidentHistory() {
@@ -2678,7 +2699,7 @@
         return;
       }
       if (!data || !data.length) {
-        body.innerHTML = '<div class="history-empty">No flight legs yet. Enter incident name + Time ↑, then when you enter Time ↓ you will be prompted for landing Hobbs and a leg is logged.</div>';
+        body.innerHTML = '<div class="history-empty">No flight legs yet. Enter Time ↓, then enter the new landing Hobbs when prompted — only then is a history row saved.</div>';
         return;
       }
       let html = '<table><thead><tr><th>When</th><th>Incident</th><th>By</th><th>Flight / key fields</th></tr></thead><tbody>';
