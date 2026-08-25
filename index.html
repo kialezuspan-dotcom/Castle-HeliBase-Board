@@ -1312,6 +1312,7 @@
         attachTimeFormatter("timeUp");
         attachTimeFormatter("timeDown");
         attachTimeFormatter("cutoff");
+        bindTimeFieldsDelegated();
       } catch (e) { console.error("listeners", e); }
       try { updateDutyRule(); } catch (e) { console.error("duty", e); }
       try { await loadAll(); } catch (e) { console.error("loadAll", e); }
@@ -2042,19 +2043,13 @@
 
 
     function formatTimeInput(el) {
-      // Digits only → auto colon for 24h HH:MM (Time↑, Time↓, Cutoff)
-      // After 2 digits show "HH:"; minutes follow
+      // Digits only → auto-insert colon as HH:MM (Time↑, Time↓, Cutoff)
       let digits = String(el.value || "").replace(/\D/g, "").slice(0, 4);
-      if (digits.length === 0) {
-        el.value = "";
-        return;
-      }
-      if (digits.length <= 2) {
-        // Show trailing colon once hours are complete so it matches Cutoff feel
-        el.value = digits.length === 2 ? (digits + ":") : digits;
-        return;
-      }
-      el.value = digits.slice(0, 2) + ":" + digits.slice(2);
+      let next = "";
+      if (digits.length === 0) next = "";
+      else if (digits.length <= 2) next = digits.length === 2 ? (digits + ":") : digits;
+      else next = digits.slice(0, 2) + ":" + digits.slice(2);
+      if (el.value !== next) el.value = next;
     }
 
     function attachTimeFormatter(id) {
@@ -2067,40 +2062,51 @@
       el.setAttribute("autocomplete", "off");
       el.removeAttribute("pattern");
 
+      let busy = false;
       const apply = function () {
-        const oldVal = el.value;
-        const oldPos = el.selectionStart;
-        formatTimeInput(el);
-        // Keep caret near end after reformatting (mobile-friendly)
+        if (busy) return;
+        busy = true;
         try {
-          const pos = el.value.length;
-          el.setSelectionRange(pos, pos);
-        } catch (e) {}
-        if (el.value !== oldVal && typeof el.dispatchEvent === "function") {
-          // no extra events needed
+          formatTimeInput(el);
+          try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) {}
+        } finally {
+          busy = false;
         }
       };
 
-      ["input", "keyup", "change", "blur"].forEach(function (evt) {
-        el.addEventListener(evt, apply);
-      });
+      el.addEventListener("input", apply);
+      el.addEventListener("keyup", apply);
+      el.addEventListener("change", apply);
+      el.addEventListener("blur", apply);
       el.addEventListener("paste", function () { setTimeout(apply, 0); });
-      // Mobile numeric keyboards sometimes only fire keydown
-      el.addEventListener("keydown", function (e) {
-        // Allow navigation / edit keys
-        if (e.ctrlKey || e.metaKey || e.altKey) return;
-        const k = e.key;
-        if (k === "Backspace" || k === "Delete" || k === "Tab" || k === "Enter" ||
-            k === "ArrowLeft" || k === "ArrowRight" || k === "Home" || k === "End") return;
-        if (k.length === 1 && k >= "0" && k <= "9") {
-          // Let the digit in, then format on next tick
-          setTimeout(apply, 0);
-        } else if (k.length === 1 && k !== ":") {
-          // Block non-digits (colon is added automatically)
+      el.addEventListener("beforeinput", function (e) {
+        // Allow digits and editing; block other characters (colon is auto)
+        if (e.inputType && e.inputType.indexOf("delete") === 0) return;
+        if (e.data && !/^\d+$/.test(e.data)) {
           e.preventDefault();
         }
       });
     }
+
+    /** Safety net: format any of the three time fields even if per-field bind failed */
+    function bindTimeFieldsDelegated() {
+      if (document.body.dataset.timeDelegate === "1") return;
+      document.body.dataset.timeDelegate = "1";
+      const ids = { timeUp: 1, timeDown: 1, cutoff: 1 };
+      document.body.addEventListener("input", function (e) {
+        const t = e.target;
+        if (!t || !t.id || !ids[t.id]) return;
+        if (t.dataset._tfBusy === "1") return;
+        t.dataset._tfBusy = "1";
+        try {
+          formatTimeInput(t);
+          try { t.setSelectionRange(t.value.length, t.value.length); } catch (err) {}
+        } finally {
+          t.dataset._tfBusy = "0";
+        }
+      }, true);
+    }
+
 
     function setToday() {
       const el = document.getElementById("date");
@@ -2527,7 +2533,9 @@
         .order("created_at", { ascending: false })
         .limit(40);
       if (error) {
-        body.innerHTML = '<div class="history-empty">Could not load history. Run Phase 2 SQL?</div>';
+        body.innerHTML = '<div class="history-empty">Could not load history: ' +
+          (error.message || "unknown error") +
+          '<br><span class="muted">Need table incident_log with columns: base_id, incident, snapshot, created_at, created_by</span></div>';
         console.error(error);
         return;
       }
@@ -2563,7 +2571,9 @@
         .order("created_at", { ascending: false })
         .limit(50);
       if (error) {
-        body.innerHTML = '<div class="history-empty">Could not load audit trail. Run Phase 2 SQL?</div>';
+        body.innerHTML = '<div class="history-empty">Could not load audit trail: ' +
+          (error.message || "unknown error") +
+          '<br><span class="muted">Need table audit_log with columns: base_id, action, detail, user_email, created_at</span></div>';
         console.error(error);
         return;
       }
