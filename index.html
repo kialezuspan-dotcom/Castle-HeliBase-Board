@@ -1062,14 +1062,14 @@
     <button class="ctrl danger edit-only" onclick="clearBoard()">Clear Board</button>
     <button class="ctrl secondary edit-only" onclick="doLogout()">Sign Out</button>
   </div>
-  <p class="autosave-hint edit-only" id="autosaveHint">Auto-saves 30s after you stop typing · Ctrl/Cmd+S to save now</p>
+  <p class="autosave-hint edit-only" id="autosaveHint">Auto-saves 5s after you stop typing · Ctrl/Cmd+S to save now</p>
 
   <div class="history-panel" id="incidentHistoryPanel">
     <h3>
       <span>Incident Log / History</span>
       <button class="btn-small" onclick="toggleIncidentHistory()">Close</button>
     </h3>
-    <p class="muted" style="margin-bottom:8px;">Snapshots are saved when you Save Board with an incident name (includes time ↑ / ↓ and crew fields).</p>
+    <p class="muted" style="margin-bottom:8px;">Flight legs are logged when you enter Time ↓ (prompts for landing Hobbs). Each row shows PIC/SIC, Up @ takeoff Hobbs, Down @ landing Hobbs.</p>
     <div id="incidentHistoryBody" class="history-empty">Loading…</div>
   </div>
 
@@ -1142,6 +1142,11 @@
     let loadCalcBy = "";
     let loadCalcAt = null;
     let ignoreRealtimeUntil = 0; // ignore own-save echo so fields are not wiped
+    // Flight leg tracking: Hobbs at takeoff vs landing
+    let hobbsAtUp = "";
+    let hobbsAtDown = "";
+    let lastTimeUpSeen = "";
+    let lastTimeDownSeen = "";
 
     // 6-day duty thresholds: [oneDayOff, twoDaysOff]
     const DUTY_RULES = {
@@ -1205,9 +1210,9 @@
       if (applyingRemote || isDisplayOnly || !currentUser) return;
       dirty = true;
       const hint = document.getElementById("autosaveHint");
-      if (hint) hint.textContent = "Unsaved changes · auto-save in 30s…";
+      if (hint) hint.textContent = "Unsaved changes · auto-save in 5s…";
       clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => { saveBoard(); }, 30000);
+      saveTimer = setTimeout(() => { saveBoard(); }, 5000);
     }
 
 
@@ -1599,6 +1604,11 @@
       document.getElementById("timeUp").value = data.time_up || "";
       document.getElementById("timeDown").value = data.time_down || "";
       document.getElementById("cutoff").value = data.cutoff || "";
+      // Flight-leg markers so we don't re-prompt on load
+      lastTimeUpSeen = (data.time_up || "").trim();
+      lastTimeDownSeen = (data.time_down || "").trim();
+      hobbsAtUp = lastTimeUpSeen ? (data.hobbs || "") : "";
+      hobbsAtDown = lastTimeDownSeen ? (data.hobbs || "") : "";
       document.getElementById("pic").value = data.pic || "";
       document.getElementById("sic").value = data.sic || "";
       document.getElementById("mech").value = data.mech || "";
@@ -1778,7 +1788,7 @@
           ? ("Saved · " + confirmBits.join(" · "))
           : "Saved · synced");
         const hint = document.getElementById("autosaveHint");
-        if (hint) hint.textContent = "Saved · auto-saves 30s after you stop typing · Ctrl/Cmd+S";
+        if (hint) hint.textContent = "Saved · auto-saves 5s after you stop typing · Ctrl/Cmd+S";
         // AABs are shared unit-wide (Castle + Mariposa stay in sync)
         try {
           await sb.from("board_state").update({
@@ -1796,6 +1806,8 @@
       BOARD_FIELDS.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
+        // Time ↑ / ↓ have dedicated handlers (Hobbs capture / prompt)
+        if (id === "timeUp" || id === "timeDown") return;
         el.addEventListener("input", () => {
           if (id.startsWith("fh")) updateDutyRule();
           scheduleAutoSave();
@@ -1805,6 +1817,17 @@
           scheduleAutoSave();
         });
       });
+      const timeUp = document.getElementById("timeUp");
+      if (timeUp) {
+        timeUp.addEventListener("change", onTimeUpChange);
+        timeUp.addEventListener("blur", onTimeUpChange);
+      }
+      const timeDown = document.getElementById("timeDown");
+      if (timeDown) {
+        // Prompt on blur/change so we don't interrupt while typing digits
+        timeDown.addEventListener("change", onTimeDownChange);
+        timeDown.addEventListener("blur", onTimeDownChange);
+      }
       const notes = document.getElementById("notesField");
       if (notes) {
         notes.addEventListener("input", () => { autosizeNotes(); scheduleAutoSave(); });
@@ -2464,12 +2487,15 @@
     // ===== Incident history + audit =====
     function snapshotFromForm() {
       const dm = document.getElementById("dutyMode");
+      const hobbsNow = document.getElementById("hobbs").value;
       return {
         aab1: document.getElementById("aab1").value,
         aab2: document.getElementById("aab2").value,
         aab3: document.getElementById("aab3").value,
         incident: document.getElementById("incident").value,
-        hobbs: document.getElementById("hobbs").value,
+        hobbs: hobbsNow,
+        hobbs_at_up: hobbsAtUp || hobbsNow || "",
+        hobbs_at_down: hobbsAtDown || "",
         time_up: document.getElementById("timeUp").value,
         time_down: document.getElementById("timeDown").value,
         cutoff: document.getElementById("cutoff").value,
@@ -2488,6 +2514,76 @@
         duty_mode: dm ? dm.value : "day_dual",
         manager_id: selectedMgrId || null
       };
+    }
+
+    /** When Time ↑ is set, lock in the board Hobbs as the takeoff reading. */
+    function onTimeUpChange() {
+      if (applyingRemote || isDisplayOnly) return;
+      const el = document.getElementById("timeUp");
+      if (!el) return;
+      if (window.formatTimeField) window.formatTimeField(el);
+      const val = (el.value || "").trim();
+      if (val && val !== lastTimeUpSeen) {
+        const h = (document.getElementById("hobbs").value || "").trim();
+        if (h) hobbsAtUp = h;
+        lastTimeUpSeen = val;
+      }
+      if (!val) {
+        lastTimeUpSeen = "";
+      }
+      scheduleAutoSave();
+    }
+
+    /**
+     * When Time ↓ is entered, prompt for the new (landing) Hobbs.
+     * Stores original Hobbs with up-time and new Hobbs with down-time in the next snapshot.
+     */
+    function onTimeDownChange() {
+      if (applyingRemote || isDisplayOnly) return;
+      const el = document.getElementById("timeDown");
+      if (!el) return;
+      if (window.formatTimeField) window.formatTimeField(el);
+      const val = (el.value || "").trim();
+      if (!val) {
+        lastTimeDownSeen = "";
+        scheduleAutoSave();
+        return;
+      }
+      if (val === lastTimeDownSeen) {
+        scheduleAutoSave();
+        return;
+      }
+      lastTimeDownSeen = val;
+
+      // Capture takeoff Hobbs if we somehow missed Time ↑
+      const currentHobbs = (document.getElementById("hobbs").value || "").trim();
+      if (!hobbsAtUp && currentHobbs) hobbsAtUp = currentHobbs;
+
+      const suggested = currentHobbs || "";
+      const entered = window.prompt(
+        "Enter Hobbs at landing (Time ↓ " + val + ").\n" +
+        "Current board Hobbs: " + (suggested || "—") + "\n" +
+        "Leave blank to keep current.",
+        suggested
+      );
+      if (entered !== null) {
+        const cleaned = String(entered).trim();
+        if (cleaned) {
+          hobbsAtDown = cleaned;
+          const hobbsEl = document.getElementById("hobbs");
+          if (hobbsEl) hobbsEl.value = cleaned;
+        } else {
+          hobbsAtDown = currentHobbs || "";
+        }
+      } else {
+        // Cancelled prompt — still record down time with whatever Hobbs is on the board
+        hobbsAtDown = currentHobbs || "";
+      }
+      // Immediately log this leg (incident, PIC/SIC, up@hobbs, down@hobbs)
+      if (currentUser && !isDisplayOnly) {
+        archiveFlightLeg().catch(function (e) { console.warn(e); });
+      }
+      scheduleAutoSave();
     }
 
     async function writeAudit(action, detail) {
@@ -2531,16 +2627,18 @@
     async function maybeArchiveIncident(newIncident) {
       const prev = (lastIncidentName || "").trim();
       const next = (newIncident || "").trim();
-      // 1) If the name changed and there was a previous name, archive the old one
+      // Only archive when the incident name changes (avoids flooding log on 5s auto-save)
       if (prev && prev !== next) {
         await insertIncidentSnapshot(prev);
       }
-      // 2) If there is a current incident name on this Save, also snapshot it
-      //    (so history shows up without requiring a second name change)
-      if (next) {
-        await insertIncidentSnapshot(next);
-      }
       lastIncidentName = next;
+    }
+
+    /** Write a flight-leg row after Time ↓ + Hobbs are captured. */
+    async function archiveFlightLeg() {
+      const name = (document.getElementById("incident").value || "").trim() || "Flight leg";
+      await insertIncidentSnapshot(name);
+      flashStatus("Flight leg saved to Incident Log");
     }
 
     function toggleIncidentHistory() {
@@ -2580,17 +2678,21 @@
         return;
       }
       if (!data || !data.length) {
-        body.innerHTML = '<div class="history-empty">No archived incidents yet. Type an incident name, set times if needed, then Save Board — a snapshot is written to history.</div>';
+        body.innerHTML = '<div class="history-empty">No flight legs yet. Enter incident name + Time ↑, then when you enter Time ↓ you will be prompted for landing Hobbs and a leg is logged.</div>';
         return;
       }
-      let html = '<table><thead><tr><th>When</th><th>Incident</th><th>By</th><th>Key fields</th></tr></thead><tbody>';
+      let html = '<table><thead><tr><th>When</th><th>Incident</th><th>By</th><th>Flight / key fields</th></tr></thead><tbody>';
       data.forEach(row => {
         const when = row.created_at ? new Date(row.created_at).toLocaleString() : "—";
         const s = row.snapshot || {};
+        const hobbsUp = s.hobbs_at_up || s.hobbs || "";
+        const hobbsDown = s.hobbs_at_down || "";
         const key = [
           s.pic ? ("PIC: " + s.pic) : "",
           s.sic ? ("SIC: " + s.sic) : "",
-          s.hobbs ? ("Hobbs: " + s.hobbs) : "",
+          s.time_up ? ("Up " + s.time_up + (hobbsUp ? (" @ Hobbs " + hobbsUp) : "")) : "",
+          s.time_down ? ("Down " + s.time_down + (hobbsDown ? (" @ Hobbs " + hobbsDown) : (hobbsUp ? (" @ Hobbs " + hobbsUp) : ""))) : "",
+          (!s.time_up && !s.time_down && s.hobbs) ? ("Hobbs: " + s.hobbs) : "",
           s.cutoff ? ("Cutoff: " + s.cutoff) : ""
         ].filter(Boolean).join(" · ") || "—";
         html += "<tr><td class='muted'>" + when + "</td><td><strong>" +
