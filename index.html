@@ -440,6 +440,34 @@
     .login-footer strong {
       color: rgba(255,255,255,0.55); font-weight: 600;
     }
+    .login-footer .app-version {
+      margin-top: 6px;
+      font-size: 0.68rem;
+      color: rgba(196, 163, 90, 0.85);
+      letter-spacing: 0.06em;
+      font-weight: 600;
+    }
+    .app-version-inline {
+      color: rgba(255,255,255,0.55);
+      font-weight: 600;
+      letter-spacing: 0.03em;
+    }
+    .display-version {
+      display: none;
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      z-index: 9990;
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: rgba(255,255,255,0.35);
+      pointer-events: none;
+      user-select: none;
+    }
+    body.display-mode .display-version {
+      display: block;
+    }
 
     .login-base-pills {
       display: none; /* hide — was extra chrome around the card */
@@ -957,6 +985,7 @@
 
       <div class="login-footer">
         Status board · Not for dispatch · Paper board remains backup
+        <div class="app-version" id="loginVersion"></div>
       </div>
 
     </div>
@@ -1186,7 +1215,10 @@
     <span id="weatherStatus" class="live">Ready</span>
     &nbsp;•&nbsp;
     <span id="syncStatus">Connecting…</span>
+    &nbsp;•&nbsp;
+    <span id="appVersionStatus" class="app-version-inline"></span>
   </div>
+  <div id="displayVersion" class="display-version" aria-hidden="true"></div>
 
   <div id="mgrModal" onclick="if(event.target===this)closeMgrModal()">
     <div class="modal-box">
@@ -1206,6 +1238,13 @@
   </div>
 
   <script>
+    // ===== APP VERSION — bump this on every index.html upload =====
+    // Format: major.minor.patch  ·  build date YYYY-MM-DD
+    // Example: after a TV layout fix → 1.5.1 · 2026-08-25
+    const APP_VERSION = "1.5.0";
+    const APP_BUILD_DATE = "2026-08-25";
+    const APP_VERSION_LABEL = "v" + APP_VERSION + " · " + APP_BUILD_DATE;
+
     const SUPABASE_URL = "https://rjrjfahhrgvfamotepkp.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqcmpmYWhocmd2ZmFtb3RlcGtwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyNTM0NTMsImV4cCI6MjEwMjgyOTQ1M30.Q69OFACS85Ddn2SD7sMPNV13fdK0QxQ7bnoNZK8eeQU";
     const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1315,7 +1354,7 @@
       const b = BASES[currentBaseId] || BASES.castle;
       const badge = document.getElementById("baseBadge");
       if (badge) badge.textContent = b.short;
-      document.title = b.label + " Status Board";
+      document.title = b.label + " Status Board · " + (typeof APP_VERSION_LABEL === "string" ? APP_VERSION_LABEL : "");
       const h2 = document.querySelector("#loginScreen h2");
       if (h2 && !isDisplayOnly) h2.textContent = b.label.toUpperCase() + " BOARD";
       try { refreshAirportLabel(); } catch (e) {}
@@ -2984,6 +3023,19 @@
       if (e.key === "Enter") doLogin();
     });
 
+    function paintAppVersion() {
+      try {
+        var label = typeof APP_VERSION_LABEL === "string" ? APP_VERSION_LABEL : "";
+        var loginEl = document.getElementById("loginVersion");
+        if (loginEl) loginEl.textContent = label;
+        var statusEl = document.getElementById("appVersionStatus");
+        if (statusEl) statusEl.textContent = label;
+        var dispEl = document.getElementById("displayVersion");
+        if (dispEl) dispEl.textContent = label;
+        console.info("Helibase Status Board", label);
+      } catch (e) {}
+    }
+    paintAppVersion();
     initAuthGate();
 
   
