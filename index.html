@@ -946,14 +946,14 @@
             <div class="tape-label">Time ↑</div>
             <div class="paper">
               <input type="text" id="timeUp" placeholder="HH:MM" inputmode="numeric"
-                     pattern="([01][0-9]|2[0-3]):[0-5][0-9]" maxlength="5" autocomplete="off" title="24-hour" />
+                     maxlength="5" autocomplete="off" title="24-hour HH:MM" />
             </div>
           </div>
           <div class="cell">
             <div class="tape-label">Time ↓</div>
             <div class="paper">
               <input type="text" id="timeDown" placeholder="HH:MM" inputmode="numeric"
-                     pattern="([01][0-9]|2[0-3]):[0-5][0-9]" maxlength="5" autocomplete="off" title="24-hour" />
+                     maxlength="5" autocomplete="off" title="24-hour HH:MM" />
             </div>
           </div>
           <div class="cell">
@@ -977,7 +977,7 @@
             <div class="tape-label">Cutoff</div>
             <div class="paper">
               <input type="text" id="cutoff" placeholder="HH:MM" inputmode="numeric"
-                     pattern="([01][0-9]|2[0-3]):[0-5][0-9]" maxlength="5" autocomplete="off" title="24-hour" />
+                     maxlength="5" autocomplete="off" title="24-hour HH:MM" />
             </div>
           </div>
         </div>
@@ -2042,51 +2042,62 @@
 
 
     function formatTimeInput(el) {
-      // Digits only → auto-insert colon for 24h HH:MM (same for Time↑, Time↓, Cutoff)
+      // Digits only → auto colon for 24h HH:MM (Time↑, Time↓, Cutoff)
+      // After 2 digits show "HH:"; minutes follow
       let digits = String(el.value || "").replace(/\D/g, "").slice(0, 4);
-      if (digits.length >= 3) {
-        el.value = digits.slice(0, 2) + ":" + digits.slice(2);
-      } else {
-        el.value = digits;
+      if (digits.length === 0) {
+        el.value = "";
+        return;
       }
+      if (digits.length <= 2) {
+        // Show trailing colon once hours are complete so it matches Cutoff feel
+        el.value = digits.length === 2 ? (digits + ":") : digits;
+        return;
+      }
+      el.value = digits.slice(0, 2) + ":" + digits.slice(2);
     }
 
     function attachTimeFormatter(id) {
       const el = document.getElementById(id);
       if (!el) return;
-      // Avoid double-binding if startApp runs twice
       if (el.dataset.timeFmt === "1") return;
       el.dataset.timeFmt = "1";
       el.setAttribute("inputmode", "numeric");
       el.setAttribute("maxlength", "5");
       el.setAttribute("autocomplete", "off");
+      el.removeAttribute("pattern");
 
-      const apply = () => {
-        const start = el.selectionStart;
-        const oldLen = el.value.length;
+      const apply = function () {
+        const oldVal = el.value;
+        const oldPos = el.selectionStart;
         formatTimeInput(el);
-        const newLen = el.value.length;
-        if (typeof start === "number") {
-          const adj = newLen - oldLen;
-          const pos = Math.min(newLen, Math.max(0, start + adj));
-          try { el.setSelectionRange(pos, pos); } catch (e) {}
+        // Keep caret near end after reformatting (mobile-friendly)
+        try {
+          const pos = el.value.length;
+          el.setSelectionRange(pos, pos);
+        } catch (e) {}
+        if (el.value !== oldVal && typeof el.dispatchEvent === "function") {
+          // no extra events needed
         }
       };
 
-      el.addEventListener("input", apply);
-      el.addEventListener("keyup", apply);
-      el.addEventListener("change", apply);
-      el.addEventListener("paste", () => setTimeout(apply, 0));
-      el.addEventListener("blur", () => {
-        let digits = String(el.value || "").replace(/\D/g, "").slice(0, 4);
-        if (digits.length === 1 || digits.length === 2) {
-          // leave partial entry; optional zero-pad hours only on full-ish entry
-          el.value = digits;
-          return;
-        }
-        if (digits.length === 3) digits = "0" + digits;
-        if (digits.length === 4) {
-          el.value = digits.slice(0, 2) + ":" + digits.slice(2);
+      ["input", "keyup", "change", "blur"].forEach(function (evt) {
+        el.addEventListener(evt, apply);
+      });
+      el.addEventListener("paste", function () { setTimeout(apply, 0); });
+      // Mobile numeric keyboards sometimes only fire keydown
+      el.addEventListener("keydown", function (e) {
+        // Allow navigation / edit keys
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const k = e.key;
+        if (k === "Backspace" || k === "Delete" || k === "Tab" || k === "Enter" ||
+            k === "ArrowLeft" || k === "ArrowRight" || k === "Home" || k === "End") return;
+        if (k.length === 1 && k >= "0" && k <= "9") {
+          // Let the digit in, then format on next tick
+          setTimeout(apply, 0);
+        } else if (k.length === 1 && k !== ":") {
+          // Block non-digits (colon is added automatically)
+          e.preventDefault();
         }
       });
     }
