@@ -227,6 +227,19 @@
       animation: pulseWarn 1.4s ease-in-out infinite;
     }
     .duty-rule.ok { background: rgba(27,122,78,0.92); color: #fff; border-color: #145c3a; }
+    .duty-rule.caution {
+      background: #e6b325; color: #1a1408; border-color: #b8860b;
+    }
+    .hours-meta {
+      margin-top: 4px;
+      color: rgba(255,255,255,0.92);
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-align: center;
+      letter-spacing: 0.02em;
+      line-height: 1.35;
+    }
+    body.display-mode .hours-meta { font-size: 0.8rem; }
     @keyframes pulseWarn {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.82; }
@@ -1129,7 +1142,7 @@
           <div class="hours-label-row">
             <div class="hours-label">Flight Hours (Rolling 6-Day)</div>
             <span class="arrow">→</span>
-            <div class="hours-total" id="hoursTotal">Total: 0.0</div>
+            <div class="hours-total" id="hoursTotal">6-day total: 0.0</div>
           </div>
           <div class="duty-mode-row edit-only">
             <select id="dutyMode" onchange="updateDutyRule(); scheduleAutoSave();">
@@ -1167,6 +1180,7 @@
               <div class="paper"><input type="number" id="fh6" step="0.1" placeholder="0.0" inputmode="decimal" /></div>
             </div>
           </div>
+          <div class="hours-meta" id="hoursMeta">6-day total: 0.0 · Last flight: —</div>
           <div class="loadcalc-warn" id="loadCalcWarn">⚠ WARNING — Temperature exceeded forecast high by &gt;5°C — REDO LOAD CALC</div>
           <div class="duty-rule" id="dutyRule">Select duty mode · hours roll left → right (oldest → today)</div>
         </div>
@@ -1241,8 +1255,8 @@
     // ===== APP VERSION — bump this on every index.html upload =====
     // Format: major.minor.patch  ·  build date YYYY-MM-DD
     // Example: after a TV layout fix → 1.5.1 · 2026-08-25
-    const APP_VERSION = "1.5.0";
-    const APP_BUILD_DATE = "2026-08-25";
+    const APP_VERSION = "1.6.0";
+    const APP_BUILD_DATE = "2026-08-30";
     const APP_VERSION_LABEL = "v" + APP_VERSION + " · " + APP_BUILD_DATE;
 
     const SUPABASE_URL = "https://rjrjfahhrgvfamotepkp.supabase.co";
@@ -1281,6 +1295,7 @@
     let hobbsAtDown = "";
     let lastTimeUpSeen = "";
     let lastTimeDownSeen = "";
+    let lastFlightDateIso = ""; // most recent day with flight hours (persisted)
 
     // 6-day duty thresholds: [oneDayOff, twoDaysOff]
     const DUTY_RULES = {
@@ -1314,6 +1329,46 @@
     function rollingDates() {
       const t = todayISO();
       return [0,1,2,3,4,5].map(i => addDaysISO(t, i - 5));
+    }
+
+    function lastFlightStorageKey() {
+      return "hb_last_flight_" + (currentBaseId || "castle");
+    }
+
+    function daysBetweenISO(fromIso, toIso) {
+      if (!fromIso || !toIso) return null;
+      const a = new Date(fromIso + "T12:00:00");
+      const b = new Date(toIso + "T12:00:00");
+      if (isNaN(a.getTime()) || isNaN(b.getTime())) return null;
+      return Math.round((b - a) / 86400000);
+    }
+
+    /** Most recent calendar day in the 6-day window that has hours > 0 */
+    function lastFlightFromSlots() {
+      const dates = rollingDates();
+      const ids = ["fh1","fh2","fh3","fh4","fh5","fh6"];
+      for (let i = 5; i >= 0; i--) {
+        if (parseHours(ids[i]) > 0) return dates[i];
+      }
+      return "";
+    }
+
+    function rememberLastFlight(fromServer) {
+      const fromSlots = lastFlightFromSlots();
+      let stored = "";
+      try { stored = localStorage.getItem(lastFlightStorageKey()) || ""; } catch (e) {}
+      const server = (fromServer || "").trim();
+      // Keep the most recent known flight day
+      const candidates = [fromSlots, stored, server, lastFlightDateIso].filter(Boolean);
+      let best = "";
+      candidates.forEach(function (iso) {
+        if (!best || daysBetweenISO(best, iso) > 0) best = iso;
+      });
+      lastFlightDateIso = best;
+      if (best) {
+        try { localStorage.setItem(lastFlightStorageKey(), best); } catch (e) {}
+      }
+      return lastFlightDateIso;
     }
 
     function refreshHourLabels() {
@@ -1754,6 +1809,7 @@
       document.getElementById("fh4").value = shifted[3];
       document.getElementById("fh5").value = shifted[4];
       document.getElementById("fh6").value = shifted[5];
+      rememberLastFlight(data.last_flight_date || "");
       document.getElementById("notesField").value = data.notes || "";
       lastServerUpdatedAt = data.updated_at || null;
       lastSavedBy = data.last_saved_by || null;
@@ -1890,10 +1946,18 @@
         selected_manager_id: selectedMgrId || null,
         duty_mode: dm ? dm.value : "day_dual",
         hours_anchor_date: rollingDates()[0],
+        last_flight_date: (rememberLastFlight() || lastFlightDateIso || null),
         last_saved_by: currentUser.email || currentUser.id || "editor",
         updated_at: new Date().toISOString()
       };
-      const { error } = await sb.from("board_state").upsert(payload, { onConflict: "base_id" });
+      let { error } = await sb.from("board_state").upsert(payload, { onConflict: "base_id" });
+      if (error && /last_flight_date/i.test(error.message || "")) {
+        // Column not added yet — save the rest of the board anyway
+        const slim = Object.assign({}, payload);
+        delete slim.last_flight_date;
+        const retry = await sb.from("board_state").upsert(slim, { onConflict: "base_id" });
+        error = retry.error;
+      }
       if (error) {
         console.error(error);
         flashStatus("Save failed: " + (error.message || "check login / SQL"));
@@ -2034,6 +2098,7 @@
             document.getElementById("fh4").value = shifted[3];
             document.getElementById("fh5").value = shifted[4];
             document.getElementById("fh6").value = shifted[5];
+            rememberLastFlight(d.last_flight_date || "");
             document.getElementById("notesField").value = d.notes || "";
             const lcp = document.getElementById("loadCalcPosted");
             loadCalcBy = d.load_calc_by || "";
@@ -2189,21 +2254,44 @@
       const total = ["fh1","fh2","fh3","fh4","fh5","fh6"].reduce((s, id) => s + parseHours(id), 0);
       const rounded = Math.round(total * 10) / 10;
       const totEl = document.getElementById("hoursTotal");
-      if (totEl) totEl.textContent = "Total: " + rounded.toFixed(1);
+      if (totEl) totEl.textContent = "6-day total: " + rounded.toFixed(1);
+
+      rememberLastFlight();
+      const lastIso = lastFlightDateIso || lastFlightFromSlots();
+      const today = todayISO();
+      const daysSince = lastIso ? daysBetweenISO(lastIso, today) : null;
+      const lastLabel = lastIso ? formatDayLabel(lastIso) : "none in window";
+      const meta = document.getElementById("hoursMeta");
+      if (meta) {
+        meta.textContent = "6-day total: " + rounded.toFixed(1) +
+          "  ·  Last flight: " + lastLabel +
+          (daysSince === 0 ? " (today)" : (daysSince > 0 ? " (" + daysSince + " day" + (daysSince === 1 ? "" : "s") + " ago)" : ""));
+      }
 
       const el = document.getElementById("dutyRule");
       if (!el) return;
-      el.classList.remove("warn", "ok");
+      el.classList.remove("warn", "ok", "caution");
 
       const modeEl = document.getElementById("dutyMode");
       const mode = (modeEl && modeEl.value) || "day_dual";
       const rule = DUTY_RULES[mode] || DUTY_RULES.day_dual;
 
-      // Daily soft-cap warnings (today = fh6)
       const todayHrs = parseHours("fh6");
       const dailyCap = (mode.indexOf("single") >= 0) ? 7.0 : 8.0;
 
-      if (rounded >= rule.two) {
+      // Consecutive no-flight days:
+      // last flight today = 0; last flight yesterday = 1; last flight 6 days ago = 6th no-flight day
+      const noFlightDays = (todayHrs > 0) ? 0 : (daysSince == null ? 6 : daysSince);
+
+      if (noFlightDays >= 7) {
+        // Six FULL days with no flight have already passed — today is day 7+
+        el.classList.add("warn");
+        el.textContent = "⚠ NO FLIGHT IN 6 DAYS — 7th-day proficiency / system check authorized TODAY (30 min, standby hours, no retardant)";
+      } else if (noFlightDays === 6 && todayHrs <= 0) {
+        // Today is the 6th consecutive no-flight day — not yet the 7th
+        el.classList.add("caution");
+        el.textContent = "If no flight is flown today (6th day with no flight), a proficiency / system check flight is authorized tomorrow (7th day, 30 min, standby, no retardant)";
+      } else if (rounded >= rule.two) {
         el.classList.add("warn");
         el.textContent = "⚠ " + rule.label + ": " + rounded.toFixed(1) + " hrs — requires TWO (2) days OFF (≥" + rule.two.toFixed(1) + ")";
       } else if (rounded >= rule.one) {
@@ -2216,10 +2304,8 @@
         el.classList.add("ok");
         el.textContent = rule.label + ": " + rounded.toFixed(1) + " / " + rule.one.toFixed(1) + " hrs (1 day off) · " + rule.two.toFixed(1) + " hrs (2 days off)";
       } else {
-        // No flight in rolling 6-day window = 6 consecutive days without flight
-        // → 7th-day system/proficiency check flight is authorized (CARS)
-        el.classList.add("warn");
-        el.textContent = "⚠ NO FLIGHT IN 6 DAYS — 7th-day proficiency / system check authorized today (30 min, standby, no retardant)";
+        el.classList.add("ok");
+        el.textContent = rule.label + ": " + rounded.toFixed(1) + " / " + rule.one.toFixed(1) + " hrs (1 day off) · " + rule.two.toFixed(1) + " hrs (2 days off)";
       }
     }
 
