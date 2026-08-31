@@ -1281,7 +1281,7 @@
     // ===== APP VERSION — bump this on every index.html upload =====
     // Format: major.minor.patch  ·  build date YYYY-MM-DD
     // Example: after a TV layout fix → 1.5.1 · 2026-08-25
-    const APP_VERSION = "1.6.2";
+    const APP_VERSION = "1.6.3";
     const APP_BUILD_DATE = "2026-08-31";
     const APP_VERSION_LABEL = "v" + APP_VERSION + " · " + APP_BUILD_DATE;
 
@@ -1405,6 +1405,22 @@
     function consecutiveNoFlightDays() {
       mergeHoursHistory();
       const today = todayISO();
+      const visibleZero = ["fh1","fh2","fh3","fh4","fh5","fh6"].every(function (id) {
+        return parseHours(id) <= 0;
+      });
+      const knownFlight = lastFlightFromSlots() || lastFlightFromHistory() || lastFlightDateIso;
+
+      // Visible window is only 6 days. When the whole window is 0.0 and no
+      // last-flight date exists, the day that just rolled off (today-6) was
+      // also a no-fly day — keep it in hidden history so day 7 can fire.
+      if (visibleZero && !knownFlight) {
+        const rolledOff = addDaysISO(today, -6);
+        if (!Object.prototype.hasOwnProperty.call(hoursHistory, rolledOff)) {
+          hoursHistory[rolledOff] = 0;
+        }
+        saveHoursHistoryLocal();
+      }
+
       let count = 0;
       for (let i = 0; i < 14; i++) {
         const iso = addDaysISO(today, -i);
