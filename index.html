@@ -1281,8 +1281,8 @@
     // ===== APP VERSION — bump this on every index.html upload =====
     // Format: major.minor.patch  ·  build date YYYY-MM-DD
     // Example: after a TV layout fix → 1.5.1 · 2026-08-25
-    const APP_VERSION = "1.6.1";
-    const APP_BUILD_DATE = "2026-08-30";
+    const APP_VERSION = "1.6.2";
+    const APP_BUILD_DATE = "2026-08-31";
     const APP_VERSION_LABEL = "v" + APP_VERSION + " · " + APP_BUILD_DATE;
 
     const SUPABASE_URL = "https://rjrjfahhrgvfamotepkp.supabase.co";
@@ -1322,6 +1322,7 @@
     let lastTimeUpSeen = "";
     let lastTimeDownSeen = "";
     let lastFlightDateIso = ""; // most recent day with flight hours (persisted)
+    let hoursHistory = {}; // hidden { "YYYY-MM-DD": hours } beyond the 6 visible slots
 
     // 6-day duty thresholds: [oneDayOff, twoDaysOff]
     const DUTY_RULES = {
@@ -1360,6 +1361,72 @@
     function lastFlightStorageKey() {
       return "hb_last_flight_" + (currentBaseId || "castle");
     }
+    function hoursHistoryStorageKey() {
+      return "hb_hours_history_" + (currentBaseId || "castle");
+    }
+
+    function parseHoursHistory(raw) {
+      if (!raw) return {};
+      if (typeof raw === "object" && !Array.isArray(raw)) return raw;
+      try {
+        const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+        return parsed && typeof parsed === "object" ? parsed : {};
+      } catch (e) { return {}; }
+    }
+
+    function loadHoursHistoryLocal() {
+      try {
+        return parseHoursHistory(localStorage.getItem(hoursHistoryStorageKey()));
+      } catch (e) { return {}; }
+    }
+
+    function saveHoursHistoryLocal() {
+      try { localStorage.setItem(hoursHistoryStorageKey(), JSON.stringify(hoursHistory || {})); } catch (e) {}
+    }
+
+    function mergeHoursHistory(extra) {
+      hoursHistory = Object.assign({}, loadHoursHistoryLocal(), hoursHistory || {}, extra || {});
+      const dates = rollingDates();
+      const ids = ["fh1","fh2","fh3","fh4","fh5","fh6"];
+      for (let i = 0; i < 6; i++) {
+        hoursHistory[dates[i]] = parseHours(ids[i]);
+      }
+      // Keep ~21 days so 7th-day logic survives after the visible window rolls
+      const today = todayISO();
+      Object.keys(hoursHistory).forEach(function (iso) {
+        const age = daysBetweenISO(iso, today);
+        if (age == null || age > 21 || age < -1) delete hoursHistory[iso];
+      });
+      saveHoursHistoryLocal();
+      return hoursHistory;
+    }
+
+    /** Count consecutive no-flight days ending today (today with 0.0 counts as 1). */
+    function consecutiveNoFlightDays() {
+      mergeHoursHistory();
+      const today = todayISO();
+      let count = 0;
+      for (let i = 0; i < 14; i++) {
+        const iso = addDaysISO(today, -i);
+        if (!Object.prototype.hasOwnProperty.call(hoursHistory, iso)) break;
+        const hrs = Number(hoursHistory[iso]);
+        if (!isFinite(hrs) || hrs > 0) break;
+        count++;
+      }
+      return count;
+    }
+
+    function lastFlightFromHistory() {
+      mergeHoursHistory();
+      const today = todayISO();
+      let best = "";
+      Object.keys(hoursHistory).forEach(function (iso) {
+        if (Number(hoursHistory[iso]) > 0) {
+          if (!best || daysBetweenISO(best, iso) > 0) best = iso;
+        }
+      });
+      return best;
+    }
 
     function daysBetweenISO(fromIso, toIso) {
       if (!fromIso || !toIso) return null;
@@ -1380,12 +1447,13 @@
     }
 
     function rememberLastFlight(fromServer) {
+      mergeHoursHistory();
       const fromSlots = lastFlightFromSlots();
+      const fromHist = lastFlightFromHistory();
       let stored = "";
       try { stored = localStorage.getItem(lastFlightStorageKey()) || ""; } catch (e) {}
       const server = (fromServer || "").trim();
-      // Keep the most recent known flight day
-      const candidates = [fromSlots, stored, server, lastFlightDateIso].filter(Boolean);
+      const candidates = [fromSlots, fromHist, stored, server, lastFlightDateIso].filter(Boolean);
       let best = "";
       candidates.forEach(function (iso) {
         if (!best || daysBetweenISO(best, iso) > 0) best = iso;
@@ -1415,9 +1483,16 @@
       const vals = [data.fh1, data.fh2, data.fh3, data.fh4, data.fh5, data.fh6].map(v => v || "");
       // map each old slot date = anchor + i
       const map = {};
+      const extra = parseHoursHistory(data && data.hours_history);
       for (let i = 0; i < 6; i++) {
-        map[addDaysISO(anchor, i)] = vals[i];
+        const iso = addDaysISO(anchor, i);
+        map[iso] = vals[i];
+        const n = parseFloat(vals[i]);
+        extra[iso] = isNaN(n) ? 0 : n;
       }
+      // Keep days that rolled off the visible 6-box window
+      hoursHistory = Object.assign({}, extra, hoursHistory);
+      saveHoursHistoryLocal();
       return dates.map(iso => map[iso] || "");
     }
 
@@ -1837,7 +1912,9 @@
       document.getElementById("fh4").value = shifted[3];
       document.getElementById("fh5").value = shifted[4];
       document.getElementById("fh6").value = shifted[5];
+      hoursHistory = Object.assign({}, parseHoursHistory(data.hours_history), hoursHistory);
       rememberLastFlight(data.last_flight_date || "");
+      mergeHoursHistory();
       document.getElementById("notesField").value = data.notes || "";
       lastServerUpdatedAt = data.updated_at || null;
       lastSavedBy = data.last_saved_by || null;
@@ -1975,14 +2052,16 @@
         duty_mode: dm ? dm.value : "day_dual",
         hours_anchor_date: rollingDates()[0],
         last_flight_date: (rememberLastFlight() || lastFlightDateIso || null),
+        hours_history: JSON.stringify(mergeHoursHistory()),
         last_saved_by: currentUser.email || currentUser.id || "editor",
         updated_at: new Date().toISOString()
       };
       let { error } = await sb.from("board_state").upsert(payload, { onConflict: "base_id" });
-      if (error && /last_flight_date/i.test(error.message || "")) {
-        // Column not added yet — save the rest of the board anyway
+      if (error && /last_flight_date|hours_history/i.test(error.message || "")) {
+        // Extra columns not added yet — save the rest of the board anyway
         const slim = Object.assign({}, payload);
         delete slim.last_flight_date;
+        delete slim.hours_history;
         const retry = await sb.from("board_state").upsert(slim, { onConflict: "base_id" });
         error = retry.error;
       }
@@ -2126,7 +2205,9 @@
             document.getElementById("fh4").value = shifted[3];
             document.getElementById("fh5").value = shifted[4];
             document.getElementById("fh6").value = shifted[5];
+            hoursHistory = Object.assign({}, parseHoursHistory(d.hours_history), hoursHistory);
             rememberLastFlight(d.last_flight_date || "");
+            mergeHoursHistory();
             document.getElementById("notesField").value = d.notes || "";
             const lcp = document.getElementById("loadCalcPosted");
             loadCalcBy = d.load_calc_by || "";
@@ -2285,15 +2366,17 @@
       if (totEl) totEl.textContent = "6-day total: " + rounded.toFixed(1);
 
       rememberLastFlight();
-      const lastIso = lastFlightDateIso || lastFlightFromSlots();
+      const lastIso = lastFlightDateIso || lastFlightFromHistory() || lastFlightFromSlots();
       const today = todayISO();
       const daysSince = lastIso ? daysBetweenISO(lastIso, today) : null;
-      const lastLabel = lastIso ? formatDayLabel(lastIso) : "none in window";
+      const lastLabel = lastIso ? formatDayLabel(lastIso) : "none recorded";
+      const noFlightDays = consecutiveNoFlightDays();
       const meta = document.getElementById("hoursMeta");
       if (meta) {
         meta.textContent = "6-day total: " + rounded.toFixed(1) +
           "  ·  Last flight: " + lastLabel +
-          (daysSince === 0 ? " (today)" : (daysSince > 0 ? " (" + daysSince + " day" + (daysSince === 1 ? "" : "s") + " ago)" : ""));
+          (daysSince === 0 ? " (today)" : (daysSince > 0 ? " (" + daysSince + " day" + (daysSince === 1 ? "" : "s") + " ago)" : "")) +
+          (noFlightDays > 0 && parseHours("fh6") <= 0 ? "  ·  " + noFlightDays + " day" + (noFlightDays === 1 ? "" : "s") + " with no flight" : "");
       }
 
       const el = document.getElementById("dutyRule");
@@ -2306,10 +2389,6 @@
 
       const todayHrs = parseHours("fh6");
       const dailyCap = (mode.indexOf("single") >= 0) ? 7.0 : 8.0;
-
-      // Consecutive no-flight days:
-      // last flight today = 0; last flight yesterday = 1; last flight 6 days ago = 6th no-flight day
-      const noFlightDays = (todayHrs > 0) ? 0 : (daysSince == null ? 6 : daysSince);
 
       if (noFlightDays >= 7) {
         // Six FULL days with no flight have already passed — today is day 7+
