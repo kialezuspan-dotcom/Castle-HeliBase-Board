@@ -99,11 +99,29 @@
       overflow: hidden; field-sizing: content;
     }
     body.display-mode .notes-area textarea {
-      min-height: auto;
+      min-height: 4.5rem;
+      max-height: 28vh;
       height: auto !important;
-      overflow: visible;
+      overflow-x: hidden !important;
+      overflow-y: auto !important;
+      field-sizing: fixed;
       white-space: pre-wrap;
       word-break: break-word;
+      pointer-events: auto !important;
+      cursor: default;
+      scrollbar-width: thin;
+      scrollbar-color: #2a5a8f #ddd8cc;
+    }
+    body.display-mode .notes-area textarea::-webkit-scrollbar {
+      width: 12px;
+    }
+    body.display-mode .notes-area textarea::-webkit-scrollbar-track {
+      background: #ddd8cc;
+      border-radius: 6px;
+    }
+    body.display-mode .notes-area textarea::-webkit-scrollbar-thumb {
+      background: #2a5a8f;
+      border-radius: 6px;
     }
     .loadcalc-preview {
       display: none; margin-top: 8px; width: 100%;
@@ -574,9 +592,16 @@
     }
     body.display-mode .section { margin-bottom: 7px; gap: 6px; }
     body.display-mode .hours-row { margin-top: 2px; }
-    body.display-mode .notes-area { min-height: 0; flex: 1 1 auto; }
+    body.display-mode .notes-area {
+      min-height: 0;
+      flex: 1 1 auto;
+      max-height: 32vh;
+    }
     body.display-mode .notes-area textarea {
-      min-height: 4rem !important;
+      min-height: 4.5rem !important;
+      max-height: 28vh !important;
+      overflow-y: auto !important;
+      pointer-events: auto !important;
     }
     body.display-mode .loadcalc-block {
       margin-top: 4px;
@@ -610,7 +635,8 @@
     }
     body.display-mode .left-panel textarea {
       resize: none;
-      min-height: 6rem;
+      min-height: 4.5rem;
+      pointer-events: auto !important; /* allow scroll on TV */
     }
     body.display-mode .btn-small,
     body.display-mode .mgr-select-row select {
@@ -1255,7 +1281,7 @@
     // ===== APP VERSION — bump this on every index.html upload =====
     // Format: major.minor.patch  ·  build date YYYY-MM-DD
     // Example: after a TV layout fix → 1.5.1 · 2026-08-25
-    const APP_VERSION = "1.6.0";
+    const APP_VERSION = "1.6.1";
     const APP_BUILD_DATE = "2026-08-30";
     const APP_VERSION_LABEL = "v" + APP_VERSION + " · " + APP_BUILD_DATE;
 
@@ -1486,6 +1512,8 @@
       document.getElementById("loginScreen").classList.remove("show");
       const exitBtn = document.getElementById("exitDisplayBtn");
       if (exitBtn) exitBtn.style.display = "none"; // pure TV mode — no exit chrome
+      const notes = document.getElementById("notesField");
+      if (notes) notes.readOnly = true;
       await startApp();
       // Hide placeholder text on empty fields (notes, times, etc.) for both bases
       document.querySelectorAll("input, textarea").forEach(el => {
@@ -2389,6 +2417,8 @@
       try { if (currentUser) saveBoard(); } catch (e) {}
       document.body.classList.add("display-mode", "editor-display");
       document.body.classList.remove("tv-mode");
+      const notesIn = document.getElementById("notesField");
+      if (notesIn) notesIn.readOnly = true;
       document.querySelectorAll("input, textarea").forEach(el => {
         if (!el.value && el.placeholder) el.setAttribute("data-ph", el.placeholder);
         el.placeholder = "";
@@ -2397,6 +2427,8 @@
     function exitDisplayMode() {
       if (isDisplayOnly) return; // pure ?view=display stays locked
       document.body.classList.remove("display-mode", "editor-display", "kiosk-fs");
+      const notesOut = document.getElementById("notesField");
+      if (notesOut) notesOut.readOnly = false;
       document.querySelectorAll("input, textarea").forEach(el => {
         const ph = el.getAttribute("data-ph");
         if (ph) { el.placeholder = ph; el.removeAttribute("data-ph"); }
