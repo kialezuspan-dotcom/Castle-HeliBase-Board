@@ -68,6 +68,21 @@
       font-family: inherit;
     }
     .aab-row input::placeholder { color: #999; font-weight: 500; }
+    .aab-title-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .aab-row input[readonly],
+    .aab-row input[disabled] {
+      background: #f3f1ea;
+      cursor: default;
+      color: #222;
+      opacity: 1;
+      -webkit-text-fill-color: #222;
+    }
+    .aab-row input.aab-unlocked {
+      background: #fff8e1;
+      cursor: text;
+    }
     .mgr-select-row { display: flex; gap: 6px; align-items: center; }
     .mgr-select-row select {
       flex: 1; padding: 8px 10px; font-size: 0.95rem; font-weight: 600;
@@ -1036,16 +1051,19 @@
       <!-- LEFT: text / contact info (like original whiteboard) -->
       <div class="left-panel">
         <div>
-          <div class="section-title">Closest AAB</div>
+          <div class="section-title aab-title-row">
+            Closest AAB
+            <button type="button" class="btn-small edit-only" id="editAabBtn" onclick="toggleAabEdit()">Edit AABs</button>
+          </div>
           <div class="aab-list">
             <div class="aab-row">
-              <input type="text" id="aab1" placeholder="Name / phone / info" autocomplete="off" />
+              <input type="text" id="aab1" placeholder="Name / phone / info" autocomplete="off" readonly disabled tabindex="-1" />
             </div>
             <div class="aab-row">
-              <input type="text" id="aab2" placeholder="Name / phone / info" autocomplete="off" />
+              <input type="text" id="aab2" placeholder="Name / phone / info" autocomplete="off" readonly disabled tabindex="-1" />
             </div>
             <div class="aab-row">
-              <input type="text" id="aab3" placeholder="Name / phone / info" autocomplete="off" />
+              <input type="text" id="aab3" placeholder="Name / phone / info" autocomplete="off" readonly disabled tabindex="-1" />
             </div>
           </div>
         </div>
@@ -1281,8 +1299,8 @@
     // ===== APP VERSION — bump this on every index.html upload =====
     // Format: major.minor.patch  ·  build date YYYY-MM-DD
     // Example: after a TV layout fix → 1.5.1 · 2026-08-25
-    const APP_VERSION = "1.6.3";
-    const APP_BUILD_DATE = "2026-08-31";
+    const APP_VERSION = "1.6.5";
+    const APP_BUILD_DATE = "2026-09-03";
     const APP_VERSION_LABEL = "v" + APP_VERSION + " · " + APP_BUILD_DATE;
 
     const SUPABASE_URL = "https://rjrjfahhrgvfamotepkp.supabase.co";
@@ -1290,11 +1308,12 @@
     const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const BOARD_FIELDS = [
-      "aab1","aab2","aab3",
       "incident","hobbs","timeUp","timeDown","cutoff",
       "pic","sic","mech","fuelDriver",
       "fh1","fh2","fh3","fh4","fh5","fh6"
     ];
+    const AAB_FIELDS = ["aab1","aab2","aab3"];
+    let aabEditUnlocked = false;
 
     const BASES = {
       castle: { id: "castle", label: "Castle Helibase", short: "CASTLE" },
@@ -1627,6 +1646,7 @@
       } catch (e) { console.error("listeners", e); }
       try { updateDutyRule(); } catch (e) { console.error("duty", e); }
       try { await loadAll(); } catch (e) { console.error("loadAll", e); }
+      try { setAabLocked(true); } catch (e) {}
       try { subscribeRealtime(); } catch (e) { console.error("realtime", e); }
       try { setupConnectivityWatch(); } catch (e) { console.warn("connectivity", e); }
       try {
@@ -2039,11 +2059,30 @@
       const timeDownVal = (document.getElementById("timeDown").value || "").trim();
       const cutoffVal = (document.getElementById("cutoff").value || "").trim();
 
+      let aab1Val = (document.getElementById("aab1").value || "").trim();
+      let aab2Val = (document.getElementById("aab2").value || "").trim();
+      let aab3Val = (document.getElementById("aab3").value || "").trim();
+      // Never push blank AABs over existing numbers
+      if (!aab1Val || !aab2Val || !aab3Val) {
+        try {
+          const existing = await sb.from("board_state").select("aab1,aab2,aab3").eq("base_id", currentBaseId).maybeSingle();
+          const row = existing && existing.data;
+          if (row) {
+            if (!aab1Val) aab1Val = row.aab1 || "";
+            if (!aab2Val) aab2Val = row.aab2 || "";
+            if (!aab3Val) aab3Val = row.aab3 || "";
+            if (aab1Val) document.getElementById("aab1").value = aab1Val;
+            if (aab2Val) document.getElementById("aab2").value = aab2Val;
+            if (aab3Val) document.getElementById("aab3").value = aab3Val;
+          }
+        } catch (e) {}
+      }
+
       const payload = {
         base_id: currentBaseId,
-        aab1: document.getElementById("aab1").value,
-        aab2: document.getElementById("aab2").value,
-        aab3: document.getElementById("aab3").value,
+        aab1: aab1Val,
+        aab2: aab2Val,
+        aab3: aab3Val,
         incident: incidentVal,
         hobbs: document.getElementById("hobbs").value,
         time_up: timeUpVal,
@@ -2110,14 +2149,17 @@
           : "Saved · synced");
         const hint = document.getElementById("autosaveHint");
         if (hint) hint.textContent = "Saved · auto-saves 5s after you stop typing · Ctrl/Cmd+S";
-        // AABs are shared unit-wide (Castle + Mariposa stay in sync)
+        // AABs are shared unit-wide — only sync when there is real text (never wipe)
         try {
-          await sb.from("board_state").update({
-            aab1: payload.aab1,
-            aab2: payload.aab2,
-            aab3: payload.aab3
-          }).in("base_id", ["castle", "mariposa"]);
+          if ((payload.aab1 || payload.aab2 || payload.aab3) && aabEditUnlocked) {
+            await sb.from("board_state").update({
+              aab1: payload.aab1,
+              aab2: payload.aab2,
+              aab3: payload.aab3
+            }).in("base_id", ["castle", "mariposa"]);
+          }
         } catch (e) { console.warn("AAB shared sync", e); }
+        setAabLocked(true);
         await maybeArchiveIncident(payload.incident);
         await writeAudit("save", payload.incident ? ("incident: " + payload.incident) : "board update");
       }
@@ -2168,8 +2210,35 @@
       });
     }
 
+    function setAabLocked(locked) {
+      aabEditUnlocked = !locked;
+      AAB_FIELDS.forEach(function (id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.readOnly = locked;
+        el.disabled = locked;
+        el.tabIndex = locked ? -1 : 0;
+        el.classList.toggle("aab-unlocked", !locked);
+      });
+      const btn = document.getElementById("editAabBtn");
+      if (btn) btn.textContent = locked ? "Edit AABs" : "Lock AABs";
+    }
+
+    function toggleAabEdit() {
+      if (isDisplayOnly || !currentUser) return;
+      if (aabEditUnlocked) {
+        setAabLocked(true);
+        saveBoard();
+        return;
+      }
+      if (!confirm("Unlock Closest AAB for editing? These numbers are shared on Castle and Mariposa.")) return;
+      setAabLocked(false);
+      const first = document.getElementById("aab1");
+      if (first) first.focus();
+    }
+
     async function clearBoard() {
-      if (!confirm("Clear all status-board fields for everyone?")) return;
+      if (!confirm("Clear all status-board fields for everyone? Closest AAB numbers will be kept.")) return;
       BOARD_FIELDS.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = "";
@@ -3112,6 +3181,7 @@
     window.deleteMgr = deleteMgr;
     window.saveBoard = saveBoard;
     window.clearBoard = clearBoard;
+    window.toggleAabEdit = toggleAabEdit;
     window.refreshWeather = refreshWeather;
     window.toggleTvMode = toggleTvMode;
     window.enterDisplayMode = enterDisplayMode;
